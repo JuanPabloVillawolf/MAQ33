@@ -10,535 +10,497 @@ Hoja 2 : SEIP Non-Inventory Transfer
 Uso:
     streamlit run flexcon_extractor_universal_v2.py
 """
+# Instalación de librerías necesarias
+!pip install pandas openpyxl pdfplumber tabula-py -q
+print("✅ Librerías instaladas correctamente")
 
-import re
-import io
-import os
-import warnings
-
+# Importar librerías
 import pandas as pd
 import pdfplumber
-import streamlit as st
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
+from google.colab import files
+import re
+from collections import defaultdict
+import warnings
+warnings.filterwarnings('ignore')
 
-warnings.filterwarnings("ignore")
+print("✅ Librerías importadas")
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  CONSTANTES
-# ══════════════════════════════════════════════════════════════════════════════
+# Subir el archivo PDF
+print("📤 Por favor, sube tu archivo PDF de FLEXCON INV TRANSFER")
+print("   (Puede ser de cualquier fecha o formato)\n")
+uploaded = files.upload()
+pdf_filename = list(uploaded.keys())[0]
+print(f"\n✅ Archivo cargado: {pdf_filename}")
 
-ORIGINS     = {"USA", "JPN", "NLD", "MEX", "CHN", "KOR", "TWN", "DEU"}
-UOM_TYPES   = {"PC", "FT", "EA", "GAL", "PT", "IN", "BOX", "KG", "LB", "M", "SET"}
-LOT_PATTERN = re.compile(r"^[A-Z]\d{7,}", re.IGNORECASE)
+# PASO 1: Análisis del PDF y detección de estructura
+print("\n" + "="*80)
+print("PASO 1: ANALIZANDO ESTRUCTURA DEL PDF")
+print("="*80)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  UTILIDADES
-# ══════════════════════════════════════════════════════════════════════════════
-
-def clean_num(s: str) -> str:
-    return s.replace(",", "").replace("$", "").strip()
-
-def safe_int(val):
-    try:
-        if pd.isna(val) or str(val).strip() in ("", "N/A", "N/D"):
-            return None
-        return int(clean_num(str(val)))
-    except Exception:
-        return None
-
-def safe_float(val):
-    try:
-        if pd.isna(val) or str(val).strip() in ("", "N/A", "N/D"):
-            return None
-        return float(clean_num(str(val)))
-    except Exception:
-        return None
-
-def extract_page_text(page) -> str:
-    try:
-        return page.extract_text(x_tolerance=3, y_tolerance=3) or ""
-    except Exception:
-        return page.extract_text() or ""
-
-def is_non_inventory_page(text: str) -> bool:
-    markers = [
-        "non-inventory transfer", "requestor name",
-        "ship to address", "m27009",
-    ]
-    t = text.lower()
-    return any(m in t for m in markers)
-
-def is_inventory_page(text: str) -> bool:
-    markers = ["inv transfer", "inventory transfer", "flexcon inv", "p5546"]
-    t = text.upper()
-    return any(m in t for m in markers)
-
-def extract_document_meta(text: str) -> dict:
-    meta = {"doc_number": "", "transfer_date": "", "total_value": None, "total_boxes": None}
-    m = re.search(r"\b(P\d{7,})\b", text)
-    if m:
-        meta["doc_number"] = m.group(1)
-    m = re.search(r"Transfer Date[:\s]+(\d{1,2}/\d{1,2}/\d{2,4})", text, re.IGNORECASE)
-    if m:
-        meta["transfer_date"] = m.group(1)
-    else:
-        m = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2,4})\b", text)
-        if m:
-            meta["transfer_date"] = m.group(1)
-    m = re.search(r"Total\s+Value[:\s]+\$?([\d,]+\.\d{2})", text, re.IGNORECASE)
-    if m:
-        meta["total_value"] = float(clean_num(m.group(1)))
-    m = re.search(r"Total\s+Boxes[:\s]+(\d+)", text, re.IGNORECASE)
-    if m:
-        meta["total_boxes"] = int(m.group(1))
-    return meta
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  EXTRACCIÓN — INV TRANSFER
-# ══════════════════════════════════════════════════════════════════════════════
-
-def parse_inventory_line(line_parts: list, line_num: str, bp: str, item: str):
-    origin_idx = -1
-    for i, tok in enumerate(line_parts):
-        if tok.upper() in ORIGINS:
-            origin_idx = i
-            break
-    if origin_idx == -1:
-        return None
-
-    description = " ".join(line_parts[:origin_idx])
-    origin      = line_parts[origin_idx].upper()
-    after       = [clean_num(t) for t in line_parts[origin_idx + 1:]]
-
-    int_vals   = [v for v in after if re.match(r"^\d+$", v)]
-    float_vals = [v for v in after if re.match(r"^\d+\.\d{2}$", v)]
-    uom_vals   = [v for v in after if v.upper() in UOM_TYPES]
-
-    quantity = int_vals[0]             if int_vals            else ""
-    uom      = uom_vals[0].upper()     if uom_vals            else ""
-    qty_m    = int_vals[1]             if len(int_vals) >= 2  else ""
-    value    = float_vals[-1]          if float_vals          else ""
-
-    return {
-        "LINE":            line_num,
-        "B/P":             bp,
-        "ITEM":            item,
-        "DESCRIPTION/LOT": description.strip(),
-        "ORIGIN":          origin,
-        "QUANTITY":        quantity,
-        "UOM":             uom,
-        "QTY(M)":          qty_m,
-        "BOXES":           "N/D",
-        "WEIGHT(KG)":      "N/D",
-        "VALUE":           value,
+def analyze_pdf_structure(pdf_path):
+    """Analiza el PDF para detectar su estructura y tipo de contenido"""
+    info = {
+        'total_pages': 0,
+        'has_tables': False,
+        'sample_lines': [],
+        'transfer_type': None  # 'inventory' o 'non-inventory'
     }
 
+    with pdfplumber.open(pdf_path) as pdf:
+        info['total_pages'] = len(pdf.pages)
 
-def extract_inventory_data(pdf_bytes: bytes):
-    all_records = []
-    doc_meta    = {}
-    DATA_LINE_RE = re.compile(r"^(\d{1,3})\s+(\d{3})\s+([\w\-\.]+)(.*)")
+        # Analizar primera página
+        first_page = pdf.pages[0]
+        text = first_page.extract_text()
 
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        # Detectar tipo de transferencia
+        if 'Non-Inventory Transfer' in text:
+            info['transfer_type'] = 'non-inventory'
+        elif 'INV TRANSFER' in text or 'INVENTORY TRANSFER' in text.upper():
+            info['transfer_type'] = 'inventory'
+
+        # Verificar si hay tablas
+        tables = first_page.extract_tables()
+        info['has_tables'] = len(tables) > 0
+
+        # Obtener líneas de muestra
+        lines = text.split('\n')
+        info['sample_lines'] = lines[:30]
+
+    return info
+
+pdf_info = analyze_pdf_structure(pdf_filename)
+
+print(f"\n📄 Total de páginas: {pdf_info['total_pages']}")
+print(f"📋 Tipo de transferencia: {pdf_info['transfer_type']}")
+print(f"📊 Contiene tablas: {'Sí' if pdf_info['has_tables'] else 'No'}")
+print("\n✅ Análisis completado")
+
+# PASO 2: Extracción inteligente de datos
+print("\n" + "="*80)
+print("PASO 2: EXTRAYENDO DATOS DEL PDF")
+print("="*80)
+
+def extract_inventory_transfer_data(pdf_path):
+    """Extrae datos de documentos FLEXCON INV TRANSFER (formato estándar)"""
+    all_data = []
+
+    with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages, 1):
-            text = extract_page_text(page)
-            if not text or is_non_inventory_page(text):
+            print(f"   Procesando página {page_num}/{len(pdf.pages)}...")
+
+            # Extraer texto completo
+            text = page.extract_text()
+            if not text:
                 continue
 
-            if not doc_meta:
-                doc_meta = extract_document_meta(text)
+            lines = text.split('\n')
 
-            lines = text.split("\n")
-            i = 0
-            while i < len(lines):
-                raw = lines[i].strip()
-                m = DATA_LINE_RE.match(raw)
-                if not m:
-                    i += 1
-                    continue
+            # Buscar líneas de datos (empiezan con número de línea)
+            for i, line in enumerate(lines):
+                # Patrón: empieza con 1-3 dígitos, seguido de espacio y otro número
+                match = re.match(r'^(\d{1,3})\s+(\d{3})\s+([\w-]+)', line)
 
-                line_num = m.group(1)
-                bp       = m.group(2)
-                item     = m.group(3)
-                rest     = m.group(4).strip()
-                tokens   = rest.split()
-                j = i + 1
+                if match:
+                    line_num = match.group(1)
+                    bp = match.group(2)
+                    item = match.group(3)
 
-                while j < min(i + 5, len(lines)):
-                    candidate = lines[j].strip()
-                    if LOT_PATTERN.match(candidate) and not any(
-                        candidate.upper().startswith(orig) for orig in ORIGINS
-                    ):
-                        tokens = tokens + [candidate]
-                        j += 1
-                        continue
-                    if any(
-                        f" {o} " in f" {candidate} " or candidate.startswith(o + " ")
-                        for o in ORIGINS
-                    ):
-                        tokens += candidate.split()
-                        j += 1
-                        break
-                    if re.match(r"^\d", candidate):
-                        if any(t.upper() in ORIGINS for t in tokens):
+                    # Extraer el resto de la línea
+                    rest_of_line = line[match.end():].strip()
+
+                    # Buscar LOT en la siguiente línea (si existe)
+                    lot_number = ''
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        # Detectar códigos LOT (empiezan con P, W, o letras similares)
+                        if re.match(r'^[A-Z]\d{8,}', next_line):
+                            lot_number = next_line
+
+                    # Parsear el resto de la línea
+                    parts = rest_of_line.split()
+
+                    # Buscar ORIGIN (USA, JPN, NLD, MEX, CHN)
+                    origin = ''
+                    origin_idx = -1
+                    for idx, part in enumerate(parts):
+                        if part in ['USA', 'JPN', 'NLD', 'MEX', 'CHN']:
+                            origin = part
+                            origin_idx = idx
                             break
-                        tokens += candidate.split()
-                        j += 1
-                        continue
-                    break
 
-                record = parse_inventory_line(tokens, line_num, bp, item)
-                if record:
-                    all_records.append(record)
-                i = j
+                    if origin_idx == -1:
+                        continue  # No se encontró origen, saltar esta línea
 
-    return all_records, doc_meta
+                    # DESCRIPTION: todo antes del ORIGIN
+                    description = ' '.join(parts[:origin_idx])
+                    if lot_number:
+                        description += ' ' + lot_number
 
+                    # Campos después del ORIGIN
+                    after_origin = parts[origin_idx + 1:]
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  EXTRACCIÓN — NON-INVENTORY TRANSFER
-# ══════════════════════════════════════════════════════════════════════════════
+                    # Limpiar comas de los números
+                    after_origin = [p.replace(',', '') for p in after_origin]
 
-def extract_non_inventory_data(pdf_bytes: bytes):
-    all_records = []
-    doc_meta    = {}
+                    # Extraer campos numéricos
+                    quantity = ''
+                    uom = ''
+                    qty_m = ''
+                    boxes = ''
+                    weight = ''
+                    value = ''
 
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    # QUANTITY (primer campo después de ORIGIN)
+                    if len(after_origin) >= 1:
+                        quantity = after_origin[0]
+
+                    # UOM (segundo campo)
+                    if len(after_origin) >= 2:
+                        uom = after_origin[1]
+
+                    # QTY(M) (tercer campo)
+                    if len(after_origin) >= 3:
+                        qty_m = after_origin[2]
+
+                    # VALUE: buscar el último número con punto decimal
+                    for j in range(len(after_origin) - 1, -1, -1):
+                        if re.match(r'^\d+\.\d{2}$', after_origin[j]):
+                            value = after_origin[j]
+                            value_idx = j
+
+                            # BOXES y WEIGHT están entre QTY(M) y VALUE
+                            middle_fields = after_origin[3:value_idx]
+
+                            # Filtrar solo números
+                            numeric_middle = []
+                            for field in middle_fields:
+                                # Verificar si es número (entero o decimal)
+                                if re.match(r'^\d+(\.\d+)?$', field):
+                                    numeric_middle.append(field)
+
+                            # Asignar BOXES y WEIGHT
+                            if len(numeric_middle) >= 1:
+                                boxes = numeric_middle[0]
+                            if len(numeric_middle) >= 2:
+                                weight = numeric_middle[1]
+
+                            break
+
+                    # Crear registro
+                    record = {
+                        'LINE': line_num,
+                        'B/P': bp,
+                        'ITEM': item,
+                        'DESCRIPTION/LOT': description.strip(),
+                        'ORIGIN': origin,
+                        'QUANTITY': quantity,
+                        'UOM': uom,
+                        'QTY(M)': qty_m,
+                        'BOXES': boxes,
+                        'WEIGHT(KG)': weight,
+                        'VALUE': value
+                    }
+
+                    all_data.append(record)
+
+    return all_data
+
+def extract_non_inventory_transfer_data(pdf_path):
+    """Extrae datos de documentos Non-Inventory Transfer"""
+    all_data = []
+
+    with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages, 1):
-            text = extract_page_text(page)
-            if not text or not is_non_inventory_page(text):
+            print(f"   Procesando página {page_num}/{len(pdf.pages)}...")
+
+            text = page.extract_text()
+            if not text:
                 continue
 
-            if not doc_meta:
-                for pattern, key in [
-                    (r"Requestor Name[:\s]+(.+)",                       "requestor"),
-                    (r"From Location[:\s]+(.+)",                        "from_location"),
-                    (r"Shipment Date[:\s]+(\d{1,2}/\d{1,2}/\d{2,4})",  "shipment_date"),
-                    (r"Ship To Address[:\s]+(.+)",                       "ship_to"),
-                ]:
-                    m = re.search(pattern, text, re.IGNORECASE)
-                    if m:
-                        doc_meta[key] = m.group(1).strip()
-                m = re.search(r"TOTAL\s+VALUE[:\s]+\$?([\d,]+\.\d{2})", text, re.IGNORECASE)
-                if m:
-                    doc_meta["total_value"] = float(clean_num(m.group(1)))
+            lines = text.split('\n')
 
-            lines = text.split("\n")
+            # Buscar líneas de datos (empiezan con número de línea)
             for line in lines:
-                m = re.match(r"^(\d{1,2})\s+(\S+)\s+(.+)", line.strip())
-                if not m:
-                    continue
-                line_num = int(m.group(1))
-                if line_num < 1 or line_num > 20:
-                    continue
+                # Patrón: empieza con 1-2 dígitos seguido de datos
+                match = re.match(r'^(\d{1,2})\s+(\S+)', line)
 
-                item_num  = m.group(2)
-                remainder = m.group(3).strip()
+                if match and int(match.group(1)) <= 20:  # Líneas típicamente 1-20
+                    line_num = match.group(1)
+                    item = match.group(2)
 
-                origin_match = None
-                for orig in ORIGINS:
-                    pat = re.search(rf"\b{orig}\b(.*)", remainder, re.IGNORECASE)
-                    if pat:
-                        origin_match = (orig.upper(), pat.start(), pat.group(1).strip())
-                        break
-                if not origin_match:
-                    continue
+                    # Extraer el resto
+                    rest = line[match.end():].strip()
+                    parts = rest.split()
 
-                origin        = origin_match[0]
-                before_origin = remainder[:origin_match[1]].strip()
-                after_origin  = origin_match[2]
+                    # Buscar ORIGIN
+                    origin = ''
+                    origin_idx = -1
+                    for idx, part in enumerate(parts):
+                        if part in ['USA', 'JPN', 'NLD', 'MEX', 'CHN']:
+                            origin = part
+                            origin_idx = idx
+                            break
 
-                uom          = ""
-                description  = before_origin
-                words_before = before_origin.split()
-                if words_before and words_before[-1].upper() in UOM_TYPES:
-                    uom         = words_before[-1].upper()
-                    description = " ".join(words_before[:-1])
+                    if origin_idx == -1:
+                        continue
 
-                after_tokens = [clean_num(t) for t in after_origin.split()]
-                quantity = ""
-                lot      = "N/A"
-                value    = ""
-                for tok in after_tokens:
-                    if tok.upper() in ("N/A", "NA"):
-                        lot = "N/A"
-                    elif re.match(r"^\d+\.\d{2}$", tok):
-                        value = tok
-                    elif re.match(r"^\d+$", tok) and not quantity:
-                        quantity = tok
+                    # Descripción antes del origen
+                    description = ' '.join(parts[:origin_idx])
 
-                all_records.append({
-                    "LINE":          str(line_num),
-                    "ITEM NUMBER":   item_num,
-                    "DESCRIPTION":   description.strip(),
-                    "U/M":           uom,
-                    "ORIGIN":        origin,
-                    "QTY REQUESTED": quantity,
-                    "LOT NUMBER":    lot,
-                    "VALUE":         value,
-                    "BOXES":         "N/D",
-                    "WEIGHT(KG)":    "N/D",
-                })
+                    # Después del origen
+                    after_origin = parts[origin_idx + 1:]
+                    after_origin = [p.replace(',', '').replace('$', '') for p in after_origin]
 
-    return all_records, doc_meta
+                    quantity = ''
+                    uom = ''
+                    value = ''
+                    boxes = ''
 
+                    # Cantidad
+                    if len(after_origin) >= 1:
+                        quantity = after_origin[0]
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  CONSTRUCCIÓN DEL EXCEL  (devuelve bytes en memoria)
-# ══════════════════════════════════════════════════════════════════════════════
+                    # UOM (puede ser Box, GAL, PC, etc.)
+                    if len(after_origin) >= 2 and not re.match(r'^\d+\.\d{2}$', after_origin[1]):
+                        uom = 'N/A'  # Non-inventory suele tener N/A
 
-def _style_header_row(ws, row_num: int, hex_color: str):
-    thick = Side(style="medium", color="404040")
-    fill  = PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
-    for cell in ws[row_num]:
-        cell.fill      = fill
-        cell.font      = Font(bold=True, color="FFFFFF", name="Arial", size=10)
-        cell.border    = Border(left=thick, right=thick, top=thick, bottom=thick)
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[row_num].height = 28
+                    # VALUE: buscar el último número con formato $X.XX
+                    for j in range(len(after_origin) - 1, -1, -1):
+                        if re.match(r'^\d+\.\d{2}$', after_origin[j]):
+                            value = after_origin[j]
+                            break
 
+                    record = {
+                        'LINE': line_num,
+                        'B/P': '',
+                        'ITEM': item,
+                        'DESCRIPTION/LOT': description.strip(),
+                        'ORIGIN': origin,
+                        'QUANTITY': quantity,
+                        'UOM': uom,
+                        'QTY(M)': '',
+                        'BOXES': boxes,
+                        'WEIGHT(KG)': '',
+                        'VALUE': value
+                    }
 
-def _style_data_rows(ws, data_start: int, data_end: int, alt_hex: str):
-    thin     = Side(style="thin", color="C0C0C0")
-    thin_b   = Border(left=thin, right=thin, top=thin, bottom=thin)
-    alt_fill = PatternFill(start_color=alt_hex, end_color=alt_hex, fill_type="solid")
-    for row_idx in range(data_start, data_end + 1):
-        for cell in ws[row_idx]:
-            cell.border    = thin_b
-            cell.font      = Font(name="Arial", size=9)
-            cell.alignment = Alignment(vertical="center")
-            if row_idx % 2 == 0:
-                cell.fill = alt_fill
+                    all_data.append(record)
 
+    return all_data
 
-def _add_total_row(ws, data_start: int, data_end: int,
-                   headers_map: dict, money_col: str,
-                   sum_cols: list, total_hex: str):
-    thick  = Side(style="medium", color="404040")
-    t_fill = PatternFill(start_color=total_hex, end_color=total_hex, fill_type="solid")
-    total_r = data_end + 1
-    ws.append(["TOTAL"] + [""] * (len(headers_map) - 1))
-    for col_name in sum_cols:
-        if col_name in headers_map:
-            cl = headers_map[col_name]
-            ws[f"{cl}{total_r}"] = f'=IFERROR(SUM({cl}{data_start}:{cl}{data_end}),"")'
-            ws[f"{cl}{total_r}"].number_format = "#,##0"
-    if money_col in headers_map:
-        cl = headers_map[money_col]
-        ws[f"{cl}{total_r}"] = f'=IFERROR(SUM({cl}{data_start}:{cl}{data_end}),"")'
-        ws[f"{cl}{total_r}"].number_format = "$#,##0.00"
-    for cell in ws[total_r]:
-        cell.fill   = t_fill
-        cell.font   = Font(bold=True, name="Arial", size=9)
-        cell.border = Border(left=thick, right=thick, top=thick, bottom=thick)
-
-
-def build_excel(inv_records, inv_meta, noninv_records, noninv_meta) -> bytes:
-    wb = Workbook()
-
-    # ── Hoja 1: INV TRANSFER ────────────────────────────────────────────────
-    ws1 = wb.active
-    ws1.title = "INV Transfer"
-
-    if inv_records:
-        df1 = pd.DataFrame(inv_records)
-        df1["LINE"]     = df1["LINE"].apply(safe_int)
-        df1["QUANTITY"] = df1["QUANTITY"].apply(safe_int)
-        df1["QTY(M)"]   = df1["QTY(M)"].apply(safe_int)
-        df1["VALUE"]    = df1["VALUE"].apply(safe_float)
-        df1.sort_values("LINE", inplace=True, ignore_index=True)
-
-        meta_str = (
-            f"Doc: {inv_meta.get('doc_number','')}   "
-            f"Fecha: {inv_meta.get('transfer_date','')}   "
-            f"Total Declarado: ${inv_meta.get('total_value', 0) or 0:,.2f}"
-        )
-        ws1.append([meta_str])
-        ws1.merge_cells(f"A1:{get_column_letter(len(df1.columns))}1")
-        ws1["A1"].font      = Font(bold=True, italic=True, name="Arial", size=9, color="404040")
-        ws1["A1"].alignment = Alignment(horizontal="left")
-
-        ws1.append(list(df1.columns))
-        _style_header_row(ws1, 2, "1F4E78")
-
-        for _, row in df1.iterrows():
-            ws1.append(list(row))
-
-        data_start, data_end = 3, 2 + len(df1)
-        _style_data_rows(ws1, data_start, data_end, "F0F4F8")
-
-        headers_map1 = {cell.value: cell.column_letter for cell in ws1[2]}
-
-        for r in range(data_start, data_end + 1):
-            for c in ["QUANTITY", "QTY(M)"]:
-                if c in headers_map1:
-                    ws1[f"{headers_map1[c]}{r}"].number_format = "#,##0"
-            if "VALUE" in headers_map1:
-                ws1[f"{headers_map1['VALUE']}{r}"].number_format = "$#,##0.00"
-
-        _add_total_row(ws1, data_start, data_end, headers_map1,
-                       "VALUE", ["QUANTITY", "QTY(M)"], "D6E4F0")
-
-        col_widths1 = {
-            "A": 6,  "B": 7,  "C": 16, "D": 58,
-            "E": 9,  "F": 12, "G": 7,  "H": 10,
-            "I": 8,  "J": 11, "K": 13,
-        }
-        for cl, w in col_widths1.items():
-            ws1.column_dimensions[cl].width = w
-        ws1.freeze_panes = "A3"
-    else:
-        ws1["A1"] = "⚠️ No se encontraron registros de tipo INV TRANSFER"
-
-    # ── Hoja 2: NON-INVENTORY TRANSFER ──────────────────────────────────────
-    ws2 = wb.create_sheet("Non-Inv Transfer")
-
-    if noninv_records:
-        df2 = pd.DataFrame(noninv_records)
-        df2["LINE"]          = df2["LINE"].apply(safe_int)
-        df2["QTY REQUESTED"] = df2["QTY REQUESTED"].apply(safe_int)
-        df2["VALUE"]         = df2["VALUE"].apply(safe_float)
-        df2.sort_values("LINE", inplace=True, ignore_index=True)
-
-        meta_str2 = (
-            f"Requestor: {noninv_meta.get('requestor','')}   "
-            f"From: {noninv_meta.get('from_location','')}   "
-            f"Ship To: {noninv_meta.get('ship_to','')}   "
-            f"Fecha: {noninv_meta.get('shipment_date','')}   "
-            f"Total Declarado: ${noninv_meta.get('total_value', 0) or 0:,.2f}"
-        )
-        ws2.append([meta_str2])
-        ws2.merge_cells(f"A1:{get_column_letter(len(df2.columns))}1")
-        ws2["A1"].font      = Font(bold=True, italic=True, name="Arial", size=9, color="404040")
-        ws2["A1"].alignment = Alignment(horizontal="left")
-
-        ws2.append(list(df2.columns))
-        _style_header_row(ws2, 2, "1D6A3A")
-
-        for _, row in df2.iterrows():
-            ws2.append(list(row))
-
-        data_start2, data_end2 = 3, 2 + len(df2)
-        _style_data_rows(ws2, data_start2, data_end2, "EDF7EF")
-
-        headers_map2 = {cell.value: cell.column_letter for cell in ws2[2]}
-
-        for r in range(data_start2, data_end2 + 1):
-            if "QTY REQUESTED" in headers_map2:
-                ws2[f"{headers_map2['QTY REQUESTED']}{r}"].number_format = "#,##0"
-            if "VALUE" in headers_map2:
-                ws2[f"{headers_map2['VALUE']}{r}"].number_format = "$#,##0.00"
-
-        _add_total_row(ws2, data_start2, data_end2, headers_map2,
-                       "VALUE", ["QTY REQUESTED"], "D5F0DC")
-
-        col_widths2 = {
-            "A": 6,  "B": 14, "C": 50, "D": 7,
-            "E": 9,  "F": 13, "G": 11, "H": 12,
-            "I": 8,  "J": 11,
-        }
-        for cl, w in col_widths2.items():
-            ws2.column_dimensions[cl].width = w
-        ws2.freeze_panes = "A3"
-    else:
-        ws2["A1"] = "⚠️ No se encontraron registros de tipo Non-Inventory Transfer"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.getvalue()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  INTERFAZ STREAMLIT
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.set_page_config(
-    page_title="FLEXCON Extractor",
-    page_icon="📦",
-    layout="centered",
-)
-
-st.title("📦 FLEXCON PDF → Excel Extractor")
-st.markdown(
-    "Sube un documento **FLEXCON INV TRANSFER** (puede contener también páginas "
-    "**Non-Inventory Transfer**). Se generará un Excel con dos hojas."
-)
-
-uploaded_file = st.file_uploader("Selecciona el archivo PDF", type=["pdf"])
-
-if uploaded_file is not None:
-    # Leer todo el PDF como bytes una sola vez
-    pdf_bytes = uploaded_file.read()
-
-    with st.spinner("Extrayendo datos del PDF..."):
-        inv_records,    inv_meta    = extract_inventory_data(pdf_bytes)
-        noninv_records, noninv_meta = extract_non_inventory_data(pdf_bytes)
-
-    # ── Métricas ─────────────────────────────────────────────────────────────
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("🗂️ INV Transfer")
-        st.metric("Registros extraídos", len(inv_records))
-        if inv_records:
-            df_inv = pd.DataFrame(inv_records)
-            df_inv["VALUE"] = df_inv["VALUE"].apply(safe_float)
-            total_calc = df_inv["VALUE"].sum()
-            st.metric("Valor calculado", f"${total_calc:,.2f}")
-            total_decl = inv_meta.get("total_value") or 0
-            if total_decl:
-                diff   = total_calc - total_decl
-                status = "✅ Coincide" if abs(diff) < 1 else f"⚠️ Dif: ${diff:,.2f}"
-                st.metric("Total declarado", f"${total_decl:,.2f}", delta=status)
-
-    with col2:
-        st.subheader("📋 Non-Inv Transfer")
-        st.metric("Registros extraídos", len(noninv_records))
-        if noninv_records:
-            df_ni = pd.DataFrame(noninv_records)
-            df_ni["VALUE"] = df_ni["VALUE"].apply(safe_float)
-            total_calc_ni = df_ni["VALUE"].sum()
-            st.metric("Valor calculado", f"${total_calc_ni:,.2f}")
-            total_decl_ni = noninv_meta.get("total_value") or 0
-            if total_decl_ni:
-                diff_ni   = total_calc_ni - total_decl_ni
-                status_ni = "✅ Coincide" if abs(diff_ni) < 1 else f"⚠️ Dif: ${diff_ni:,.2f}"
-                st.metric("Total declarado", f"${total_decl_ni:,.2f}", delta=status_ni)
-
-    # ── Preview ───────────────────────────────────────────────────────────────
-    if inv_records:
-        with st.expander("👁️ Preview — INV Transfer", expanded=False):
-            st.dataframe(pd.DataFrame(inv_records), use_container_width=True)
-
-    if noninv_records:
-        with st.expander("👁️ Preview — Non-Inv Transfer", expanded=False):
-            st.dataframe(pd.DataFrame(noninv_records), use_container_width=True)
-
-    # ── Generar y descargar Excel ─────────────────────────────────────────────
-    if inv_records or noninv_records:
-        with st.spinner("Generando Excel..."):
-            excel_bytes = build_excel(inv_records, inv_meta, noninv_records, noninv_meta)
-
-        base_name   = os.path.splitext(uploaded_file.name)[0]
-        output_name = f"{base_name}_EXTRACTED.xlsx"
-
-        st.success("✅ Excel generado correctamente")
-        st.download_button(
-            label="⬇️ Descargar Excel",
-            data=excel_bytes,
-            file_name=output_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        st.error(
-            "❌ No se pudieron extraer datos. "
-            "Verifica que el archivo sea un documento FLEXCON válido."
-        )
-
+# Extraer según el tipo de documento
+if pdf_info['transfer_type'] == 'inventory':
+    print("   Tipo: INVENTORY TRANSFER")
+    extracted_data = extract_inventory_transfer_data(pdf_filename)
+elif pdf_info['transfer_type'] == 'non-inventory':
+    print("   Tipo: NON-INVENTORY TRANSFER")
+    extracted_data = extract_non_inventory_transfer_data(pdf_filename)
 else:
-    st.info("👆 Sube un archivo PDF para comenzar.")
+    print("   Tipo: DESCONOCIDO - Intentando extracción genérica...")
+    extracted_data = extract_inventory_transfer_data(pdf_filename)
+
+print(f"\n✅ Datos extraídos: {len(extracted_data)} registros")
+
+# PASO 3: Validación y limpieza de datos
+print("\n" + "="*80)
+print("PASO 3: VALIDANDO Y LIMPIANDO DATOS")
+print("="*80)
+
+if len(extracted_data) == 0:
+    print("\n⚠️  No se pudieron extraer datos automáticamente.")
+    print("    Por favor verifica que el PDF sea un documento FLEXCON válido.")
+else:
+    # Crear DataFrame
+    df = pd.DataFrame(extracted_data)
+
+    # Funciones de conversión segura
+    def safe_int(val):
+        try:
+            if pd.isna(val) or val == '' or val == 'N/A':
+                return None
+            return int(str(val).replace(',', '').replace('$', '').strip())
+        except:
+            return None
+
+    def safe_float(val):
+        try:
+            if pd.isna(val) or val == '' or val == 'N/A':
+                return None
+            return float(str(val).replace(',', '').replace('$', '').strip())
+        except:
+            return None
+
+    # Convertir tipos de datos
+    df['LINE'] = df['LINE'].apply(safe_int)
+    df['B/P'] = df['B/P'].apply(lambda x: safe_int(x) if x else None)
+    df['QUANTITY'] = df['QUANTITY'].apply(safe_int)
+    df['QTY(M)'] = df['QTY(M)'].apply(safe_int)
+    df['BOXES'] = df['BOXES'].apply(safe_int)
+    df['WEIGHT(KG)'] = df['WEIGHT(KG)'].apply(safe_float)
+    df['VALUE'] = df['VALUE'].apply(safe_float)
+
+    # Ordenar por LINE
+    df = df.sort_values('LINE').reset_index(drop=True)
+
+    print(f"\n✅ Datos validados: {len(df)} registros")
+    print(f"   - Registros con VALUE: {df['VALUE'].notna().sum()}")
+    print(f"   - Total VALUE: ${df['VALUE'].sum():,.2f}" if df['VALUE'].sum() > 0 else "")
+
+# PASO 4: Mostrar preview de datos
+print("\n" + "="*80)
+print("PASO 4: PREVIEW DE DATOS EXTRAÍDOS")
+print("="*80)
+
+if len(extracted_data) > 0:
+    print("\nPRIMEROS 10 REGISTROS:")
+    print("-" * 80)
+    display(df.head(10))
+
+    if len(df) > 10:
+        print("\nÚLTIMOS 5 REGISTROS:")
+        print("-" * 80)
+        display(df.tail(5))
+
+# PASO 5: Exportar a Excel con formato profesional
+print("\n" + "="*80)
+print("PASO 5: EXPORTANDO A EXCEL")
+print("="*80)
+
+if len(extracted_data) > 0:
+    # Nombre del archivo de salida
+    import os
+    base_name = os.path.splitext(pdf_filename)[0]
+    output_filename = f'{base_name}_EXTRACTED.xlsx'
+
+    # Crear Excel con formato
+    with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Transfer Data', index=False)
+
+        # Obtener el workbook y worksheet
+        workbook = writer.book
+        worksheet = writer.sheets['Transfer Data']
+
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+        # Formato de encabezados
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Ajustar ancho de columnas
+        column_widths = {
+            'A': 8,   # LINE
+            'B': 8,   # B/P
+            'C': 16,  # ITEM
+            'D': 60,  # DESCRIPTION/LOT
+            'E': 10,  # ORIGIN
+            'F': 13,  # QUANTITY
+            'G': 8,   # UOM
+            'H': 11,  # QTY(M)
+            'I': 10,  # BOXES
+            'J': 13,  # WEIGHT(KG)
+            'K': 14   # VALUE
+        }
+
+        for col, width in column_widths.items():
+            worksheet.column_dimensions[col].width = width
+
+        # Formato numérico
+        for row in range(2, len(df) + 2):
+            # VALUE con formato de moneda
+            if worksheet[f'K{row}'].value is not None:
+                worksheet[f'K{row}'].number_format = '$#,##0.00'
+            # QUANTITY con separador de miles
+            if worksheet[f'F{row}'].value is not None:
+                worksheet[f'F{row}'].number_format = '#,##0'
+            # QTY(M) con separador de miles
+            if worksheet[f'H{row}'].value is not None:
+                worksheet[f'H{row}'].number_format = '#,##0'
+
+        # Agregar bordes
+        thin_border = Border(
+            left=Side(style='thin', color='000000'),
+            right=Side(style='thin', color='000000'),
+            top=Side(style='thin', color='000000'),
+            bottom=Side(style='thin', color='000000')
+        )
+
+        for row in worksheet.iter_rows(min_row=1, max_row=len(df)+1, min_col=1, max_col=11):
+            for cell in row:
+                cell.border = thin_border
+                if cell.row > 1:
+                    cell.alignment = Alignment(vertical='center', wrap_text=False)
+
+# PASO 6: Descargar archivo
+print("\n" + "="*80)
+print("PASO 6: DESCARGANDO ARCHIVO")
+print("="*80)
+
+if len(extracted_data) > 0:
+    files.download(output_filename)
+    print(f"\n✅ Descarga iniciada: {output_filename}")
+
+# ESTADÍSTICAS FINALES
+print("\n" + "="*80)
+print("📊 ESTADÍSTICAS FINALES")
+print("="*80)
+
+if len(extracted_data) > 0:
+    print(f"\n📄 Archivo procesado: {pdf_filename}")
+    print(f"📋 Tipo de documento: {pdf_info['transfer_type'].upper() if pdf_info['transfer_type'] else 'INVENTORY'}")
+    print(f"📃 Páginas procesadas: {pdf_info['total_pages']}")
+    print(f"\n{'RESUMEN DE DATOS':^80}")
+    print("-" * 80)
+    print(f"Total de Items (Líneas): {len(df)}")
+    print(f"Registros con VALUE: {df['VALUE'].notna().sum()} ({df['VALUE'].notna().sum()/len(df)*100:.1f}%)")
+
+    if df['BOXES'].sum() > 0:
+        print(f"Total de Cajas: {df['BOXES'].sum():.0f}")
+    if df['WEIGHT(KG)'].sum() > 0:
+        print(f"Peso Total (KG): {df['WEIGHT(KG)'].sum():.2f}")
+
+    print(f"\n💰 VALOR TOTAL: ${df['VALUE'].sum():,.2f}")
+
+    # Distribución por ORIGIN
+    if df['ORIGIN'].notna().sum() > 0:
+        print(f"\n{'DISTRIBUCIÓN POR ORIGEN':^80}")
+        print("-" * 80)
+        origin_stats = df.groupby('ORIGIN').agg({
+            'LINE': 'count',
+            'VALUE': 'sum'
+        }).round(2)
+        origin_stats.columns = ['Items', 'Total Value ($)']
+        print(origin_stats.to_string())
+
+    # Distribución por UOM
+    if df['UOM'].notna().sum() > 0:
+        print(f"\n{'DISTRIBUCIÓN POR UNIDAD DE MEDIDA':^80}")
+        print("-" * 80)
+        uom_stats = df.groupby('UOM').agg({
+            'LINE': 'count',
+            'QUANTITY': 'sum'
+        }).round(0)
+        uom_stats.columns = ['Items', 'Cantidad Total']
+        print(uom_stats.to_string())
+
+    # Top items por valor
+    if df['VALUE'].sum() > 0:
+        print(f"\n{'TOP 5 ITEMS POR VALOR':^80}")
+        print("-" * 80)
+        top_items = df.nlargest(5, 'VALUE')[['LINE', 'ITEM', 'DESCRIPTION/LOT', 'VALUE']]
+        for idx, row in top_items.iterrows():
+            print(f"{int(row['LINE']):>3}. {row['ITEM']:<18} ${row['VALUE']:>12,.2f}")
+            desc = row['DESCRIPTION/LOT'][:75]
+            print(f"     {desc}")
+
+    print("\n" + "="*80)
+    print("✅ PROCESO COMPLETADO EXITOSAMENTE")
+    print("="*80)
+else:
+    print("\n❌ No se pudieron extraer datos del PDF.")
+    print("   Verifica que el archivo sea un documento FLEXCON válido.")
