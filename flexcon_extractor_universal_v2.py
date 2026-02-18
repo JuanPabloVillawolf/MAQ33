@@ -9,10 +9,11 @@ Hoja 2 : SEIP Non-Inventory Transfer
 
 Uso:
     streamlit run flexcon_extractor_universal_v2.py
-"""
+
 # Instalación de librerías necesarias
 !pip install pandas openpyxl pdfplumber tabula-py -q
 print("✅ Librerías instaladas correctamente")
+""" 
 
 # Importar librerías
 import pandas as pd
