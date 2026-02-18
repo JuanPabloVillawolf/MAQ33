@@ -43,7 +43,7 @@ warnings.filterwarnings("ignore")
 try:
     from google.colab import files
     print("\n📤 Sube tu archivo PDF de FLEXCON:")
-    uploaded = files.upload()
+    uploaded = UploadedFile
     PDF_PATH = list(uploaded.keys())[0]
 except ImportError:
     # Modo local: pasar ruta como argumento o variable
