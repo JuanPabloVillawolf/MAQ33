@@ -186,7 +186,8 @@ def extract_inventory_data(pdf_bytes: bytes) -> tuple[list, dict]:
             for actual_top, line_num in anchor_list:
 
                 def collect(zones_keys, dy_max):
-                    """Recoge textos de ciertas zonas dentro de ±dy_max del ancla."""
+                    """Recoge textos de ciertas zonas dentro de ±dy_max del ancla.
+                    Almacena (top, x0, text) para poder ordenar por posición real."""
                     result = {k: [] for k in zones_keys}
                     for cw in clean_words:
                         dy = abs(cw['top'] - actual_top)
@@ -194,7 +195,7 @@ def extract_inventory_data(pdf_bytes: bytes) -> tuple[list, dict]:
                             continue
                         col = col_of(cw['x0'], INV_COLS)
                         if col in zones_keys:
-                            result[col].append((cw['top'], cw['text']))
+                            result[col].append((cw['top'], cw['x0'], cw['text']))
                     return result
 
                 def collect_below(zones_keys, dy_min, dy_max):
@@ -216,33 +217,42 @@ def extract_inventory_data(pdf_bytes: bytes) -> tuple[list, dict]:
                 lot_data  = collect_below(['DESCRIPTION'], 6, 20)
 
                 # ── Construir campos ─────────────────────────────────────────
-                bp   = ' '.join(t for _, t in same_row['B_P'])
-                item = ' '.join(t for _, t in same_row['ITEM'])
-                desc = ' '.join(t for _, t in sorted(same_row['DESCRIPTION']))
+                # Ordenar por (fila_visual, x0) = orden natural de lectura: izq→der, arriba→abajo
+                # top se redondea a bucket de 3px para que variaciones sub-pixel no rompan el orden
+                def reading_order(items, bucket=3):
+                    return [t for _, _, t in sorted(items, key=lambda w: (round(w[0]/bucket), w[1]))]
 
-                # ORIGIN: primer token válido en ±6px
-                origin = next((t for _, t in same_row['ORIGIN']
-                                if t.upper() in ORIGINS), '')
+                bp   = ' '.join(reading_order(same_row['B_P']))
+                item = ' '.join(reading_order(same_row['ITEM']))
+                desc = ' '.join(reading_order(same_row['DESCRIPTION']))
 
-                # QUANTITY: primer número entero en ±6px (maneja OCR '2.720' -> 2720)
-                qty_tokens = [parse_quantity(t) for _, t in same_row['QUANTITY']
+                # ORIGIN: primer token válido en ±6px (lectura natural)
+                origin = next((t for _, _, t in sorted(same_row['ORIGIN'],
+                               key=lambda w: (round(w[0]/3), w[1]))
+                               if t.upper() in ORIGINS), '')
+
+                # QUANTITY: primer número entero en ±6px (lectura natural)
+                qty_tokens = [parse_quantity(t) for _, _, t in sorted(same_row['QUANTITY'],
+                              key=lambda w: (round(w[0]/3), w[1]))
                               if parse_quantity(t)]
                 quantity   = qty_tokens[0] if qty_tokens else ''
 
                 # UOM: primera palabra en ±18px que sea unidad
-                uom_tokens = [t.upper() for _, t in float_row['UOM']
+                uom_tokens = [t.upper() for _, _, t in sorted(float_row['UOM'],
+                              key=lambda w: (round(w[0]/3), w[1]))
                               if not is_garbage(t) and len(t) <= 5]
                 uom        = uom_tokens[0] if uom_tokens else ''
 
                 # QTY_M: primer entero en ±18px
-                qtym_tokens = [clean_num(t) for _, t in float_row['QTY_M']
+                qtym_tokens = [clean_num(t) for _, _, t in sorted(float_row['QTY_M'],
+                               key=lambda w: (round(w[0]/3), w[1]))
                                if INT_RE.match(clean_num(t))]
                 qty_m       = qtym_tokens[0] if qtym_tokens else ''
 
                 # VALUE: el ÚLTIMO decimal válido en ±18px
                 # (el último suele ser el más a la derecha = VALUE real)
                 val_candidates = []
-                for _, t in float_row['VALUE']:
+                for _, _, t in sorted(float_row['VALUE'], key=lambda w: (round(w[0]/3), w[1])):
                     cv = fix_decimal(t)
                     if re.match(r'^\d+\.\d{2}$', cv):
                         val_candidates.append(cv)
