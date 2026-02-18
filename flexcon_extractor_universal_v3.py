@@ -47,7 +47,7 @@ NI_COLS = {
     # BOXES/WEIGHT → manuscrito
 }
 
-ORIGINS  = {"USA","JPN","NLD","MEX","CHN","KOR","TWN","DEU"}
+ORIGINS  = {}
 LOT_RE   = re.compile(r'^[A-Za-z][Oo0-9]{7,}$')
 VALUE_RE = re.compile(r'^\d[\d,]*\.\d{2}$')
 INT_RE   = re.compile(r'^\d[\d,]*$')
