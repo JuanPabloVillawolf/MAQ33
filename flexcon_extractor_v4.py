@@ -173,7 +173,7 @@ def extract_inv_page(page, meta):
         # Campos de la misma fila
         same   = coll(['B_P','ITEM','DESCRIPTION','ORIGIN','QUANTITY'], -8, 8)
         # UOM y QTY_M pueden flotar ±18px
-        flt    = coll(['UOM','QTY_M','VALUE'], -6, 18)
+        flt    = coll(['UOM','QTY_M','VALUE'], -10, 20)
         # LOT en sub-fila (+5 a +20px)
         below  = coll(['DESCRIPTION'], 5, 20)
 
@@ -265,7 +265,7 @@ def extract_ni_page(page, meta):
 
         desc = ' '.join(ro(wide.get('DESCRIPTION',[])))
         uom  = ' '.join(t for _,_,t in sorted(strict.get('UOM',[]),
-               key=lambda w:(round(w[0]/3),w[1])) if t.isalpha() and len(t)<=4).upper()
+               key=lambda w:(round(w[0]/3),w[1])) if t.isalpha() and len(t)<=4 and t.upper() not in ORIGINS).upper()
 
         origin = next((t for _,_,t in strict.get('ORIGIN',[])
                        if t.upper() in ORIGINS - {'PC'}),'')
@@ -309,11 +309,23 @@ def extract_all(pdf_bytes):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         page_metas = [(p, detect_meta(p)) for p in pdf.pages]
 
-    cur_ts, cur_seq = None, 0
+    # Agrupar por secuencia de página fisica:
+    # Si el numero de pagina retrocede (ej 2→1) o cambia tipo/fecha → nuevo documento
+    cur_seq = 0
+    prev_page_num = 0
+    prev_date = None
+    prev_type = None
     for _, meta in page_metas:
-        if meta['timestamp'] != cur_ts:
-            cur_seq += 1; cur_ts = meta['timestamp']
+        pn   = meta['page_num']
+        date = meta['date']
+        dt   = meta['doc_type']
+        # Nuevo documento si: página 1 de un tipo diferente, o fecha distinta, o tipo distinto
+        if pn <= prev_page_num or date != prev_date or dt != prev_type:
+            cur_seq += 1
         meta['doc_seq'] = cur_seq
+        prev_page_num = pn
+        prev_date = date
+        prev_type = dt
 
     all_records   = []
     doc_summaries = {}
