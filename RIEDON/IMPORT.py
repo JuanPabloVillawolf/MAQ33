@@ -1,12 +1,11 @@
 """
 app.py — Supply List Enricher
-Versión : 1.1.0
+Versión : 1.2.0
 Descripción:
     Enriquece un Supply List con datos del Catálogo de Partes mediante
     un LEFT JOIN en "Part No." / "NumParte", aplica transformaciones de
-    COO y Tracking Number, excluye columnas internas no deseadas, y
-    expone una interfaz Streamlit con carga de archivos y descarga del
-    resultado en formato Excel.
+    COO y Tracking Number, excluye columnas internas, reordena el resultado
+    y exporta a Excel. Acepta archivos .xlsx, .xls y .csv.
 
 Uso:
     streamlit run app.py
@@ -36,10 +35,15 @@ SUPPLY_REQUIRED_COLS = [
 ]
 
 # Columnas que se requieren en el Catálogo de Partes
-CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "UM", "FraccionMX"]
+CATALOG_REQUIRED_COLS = [
+    "NumParte",
+    "Tim_Clave",
+    "Par_DescripcionEsp",
+    "FraccionMX",
+    "UM",          # ← extraída del catálogo
+]
 
-# Columnas internas / administrativas que NO deben aparecer en el archivo final.
-# Si alguna no existe en el DataFrame, simplemente se ignora (errors="ignore").
+# Columnas internas que NO deben aparecer en el archivo final
 COLUMNS_TO_EXCLUDE = [
     "Created By",
     "Description",
@@ -62,6 +66,28 @@ COLUMNS_TO_EXCLUDE = [
     "Size of Entry Warehouse",
 ]
 
+# Orden final de columnas en el Excel de salida.
+# "Part No." se renombra a "NumParte" para consistencia con el catálogo.
+# "Tracking" es copia de "Tracking Number" (con prefijo ya aplicado).
+FINAL_COLUMN_ORDER = [
+    "NumParte",
+    "Po Number",
+    "Qty",
+    "Unit of Measure",
+    "Country of Origin",
+    "Unit Price (USD)",
+    "Weight",
+    "Weight Unit",
+    "Item Type",
+    "Tracking Number",
+    "Tim_Clave",
+    "Par_DescripcionEsp",
+    "FraccionMX",
+    "Tracking",
+    "COO",
+    "UM",
+]
+
 # Mapeo de códigos ISO → nombre completo para la columna COO
 COO_MAP = {
     "CHN": "CHINA",
@@ -76,22 +102,53 @@ COO_MAP = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LECTURA DE ARCHIVOS (EXCEL O CSV)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def read_file(file: io.BytesIO, label: str) -> pd.DataFrame:
+    """
+    Lee un archivo y retorna un DataFrame.
+    Soporta .xlsx, .xls y .csv.
+
+    Parámetros
+    ----------
+    file  : Objeto de archivo cargado por Streamlit.
+    label : Nombre descriptivo para mensajes de error.
+
+    Lanza
+    -----
+    ValueError si el formato no es soportado.
+    """
+    name = file.name.lower()
+
+    if name.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(file, dtype=str)
+    elif name.endswith(".csv"):
+        # Intentar detectar separador automáticamente (coma o punto y coma)
+        raw = file.read()
+        file.seek(0)  # rebobinar para que pandas pueda leerlo
+        sample = raw[:2048].decode("utf-8", errors="ignore")
+        sep = ";" if sample.count(";") > sample.count(",") else ","
+        df = pd.read_csv(file, dtype=str, sep=sep, encoding="utf-8-sig")
+    else:
+        raise ValueError(
+            f"❌ Formato no soportado en '{label}'. "
+            f"Usa archivos .xlsx, .xls o .csv."
+        )
+
+    # Limpiar espacios en los encabezados
+    df.columns = df.columns.str.strip()
+    return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FUNCIONES DE VALIDACIÓN
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validate_columns(df: pd.DataFrame, required: list[str], file_label: str) -> None:
     """
     Verifica que un DataFrame contenga todas las columnas requeridas.
-
-    Parámetros
-    ----------
-    df          : DataFrame a validar.
-    required    : Lista de nombres de columnas obligatorias.
-    file_label  : Nombre descriptivo del archivo (para el mensaje de error).
-
-    Lanza
-    -----
-    ValueError si faltan columnas.
+    Lanza ValueError con el detalle de las faltantes.
     """
     missing = [col for col in required if col not in df.columns]
     if missing:
@@ -111,18 +168,9 @@ def enrich_with_catalog(
     catalog_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Realiza un LEFT JOIN entre el Supply List y el Catálogo de Partes.
-
-    Llave de unión:
-        Supply List  → "Part No."
-        Catálogo     → "NumParte"
-
-    Columnas agregadas al resultado:
-        Tim_Clave | Par_DescripcionEsp | FraccionMX
-
-    Registros sin coincidencia conservan NaN en esas columnas.
+    LEFT JOIN entre Supply List ("Part No.") y Catálogo ("NumParte").
+    Agrega: Tim_Clave | Par_DescripcionEsp | FraccionMX | UM
     """
-    # Solo se toman las columnas necesarias del catálogo
     catalog_slim = catalog_df[CATALOG_REQUIRED_COLS].copy()
 
     enriched_df = supply_df.merge(
@@ -132,7 +180,7 @@ def enrich_with_catalog(
         right_on="NumParte",
     )
 
-    # Eliminar la columna llave duplicada proveniente del catálogo
+    # Eliminar columna llave duplicada del catálogo
     enriched_df.drop(columns=["NumParte"], inplace=True, errors="ignore")
 
     return enriched_df
@@ -140,9 +188,8 @@ def enrich_with_catalog(
 
 def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Crea la columna 'COO' mapeando los códigos de 'County of Origin (Made In)'
-    a su nombre completo según COO_MAP.
-    Si el código no existe en el mapa, conserva el valor original.
+    Crea la columna 'COO' a partir de 'County of Origin (Made In)'
+    usando el mapa COO_MAP. Conserva el valor original si no hay match.
     """
     df = df.copy()
     df["COO"] = (
@@ -157,11 +204,8 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Agrega el prefijo 'TRACKING ' al inicio de cada valor en
-    la columna 'Tracking Number'.
-
-    - Omite celdas vacías o NaN.
-    - Evita duplicar el prefijo si ya estuviera presente.
+    Agrega el prefijo 'TRACKING ' a la columna 'Tracking Number'.
+    Omite NaN/vacíos y evita duplicar el prefijo.
     """
     df = df.copy()
 
@@ -170,20 +214,49 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
             return val
         val_str = str(val).strip()
         if val_str.upper().startswith("TRACKING "):
-            return val_str                    # ya tiene el prefijo, no duplicar
+            return val_str
         return f"TRACKING {val_str}"
 
     df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
     return df
 
 
+def add_tracking_copy(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Crea la columna 'Tracking' como copia exacta de 'Tracking Number'
+    (ya con el prefijo aplicado).
+    """
+    df = df.copy()
+    df["Tracking"] = df["Tracking Number"]
+    return df
+
+
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Elimina del DataFrame las columnas listadas en COLUMNS_TO_EXCLUDE.
-    Las columnas que no existan en el DataFrame son ignoradas silenciosamente,
-    por lo que esta función es segura sin importar qué columnas extras haya.
+    Elimina las columnas internas listadas en COLUMNS_TO_EXCLUDE.
+    Ignora silenciosamente las que no existan.
     """
     return df.drop(columns=COLUMNS_TO_EXCLUDE, errors="ignore")
+
+
+def rename_and_reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    1. Renombra 'Part No.' → 'NumParte' y
+       'County of Origin (Made In)' → 'Country of Origin'.
+    2. Reordena las columnas según FINAL_COLUMN_ORDER.
+       Las columnas no listadas se descartan del resultado final.
+    """
+    df = df.copy()
+
+    # Renombrar columnas para consistencia con el orden final
+    df.rename(columns={
+        "Part No.":                  "NumParte",
+        "County of Origin (Made In)": "Country of Origin",
+    }, inplace=True)
+
+    # Filtrar solo las columnas del orden final que existan en el DataFrame
+    cols_present = [c for c in FINAL_COLUMN_ORDER if c in df.columns]
+    return df[cols_present]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,40 +268,35 @@ def process_files(
     catalog_file: io.BytesIO,
 ) -> pd.DataFrame:
     """
-    Orquesta la lectura, validación y transformación completa.
+    Orquesta lectura, validación y todas las transformaciones.
 
-    Parámetros
-    ----------
-    supply_file  : Objeto de archivo del Supply List  (.xlsx / .xls).
-    catalog_file : Objeto de archivo del Catálogo     (.xlsx / .xls).
-
-    Retorna
-    -------
-    DataFrame enriquecido, transformado y sin columnas excluidas.
+    Retorna DataFrame listo para exportar.
     """
-    # ── 1. Lectura ──────────────────────────────────────────────────────────
-    supply_df  = pd.read_excel(supply_file,  dtype=str)   # dtype=str evita
-    catalog_df = pd.read_excel(catalog_file, dtype=str)   # conversiones no deseadas
+    # ── 1. Lectura ───────────────────────────────────────────────────────────
+    supply_df  = read_file(supply_file,  "Supply List")
+    catalog_df = read_file(catalog_file, "Catálogo de Partes")
 
-    # Limpiar espacios en los encabezados por si vienen con padding
-    supply_df.columns  = supply_df.columns.str.strip()
-    catalog_df.columns = catalog_df.columns.str.strip()
-
-    # ── 2. Validación de columnas ────────────────────────────────────────────
+    # ── 2. Validación ────────────────────────────────────────────────────────
     validate_columns(supply_df,  SUPPLY_REQUIRED_COLS,  "Supply List")
     validate_columns(catalog_df, CATALOG_REQUIRED_COLS, "Catálogo de Partes")
 
-    # ── 3. Enriquecimiento con el catálogo (LEFT JOIN) ───────────────────────
+    # ── 3. LEFT JOIN con catálogo ────────────────────────────────────────────
     result_df = enrich_with_catalog(supply_df, catalog_df)
 
-    # ── 4. Nueva columna COO ─────────────────────────────────────────────────
+    # ── 4. Columna COO ───────────────────────────────────────────────────────
     result_df = apply_coo_column(result_df)
 
-    # ── 5. Prefijo en Tracking Number ────────────────────────────────────────
+    # ── 5. Prefijo TRACKING en Tracking Number ───────────────────────────────
     result_df = apply_tracking_prefix(result_df)
 
-    # ── 6. Eliminar columnas internas no deseadas ────────────────────────────
+    # ── 6. Columna Tracking (copia de Tracking Number) ───────────────────────
+    result_df = add_tracking_copy(result_df)
+
+    # ── 7. Eliminar columnas internas ────────────────────────────────────────
     result_df = drop_excluded_columns(result_df)
+
+    # ── 8. Renombrar y reordenar columnas finales ────────────────────────────
+    result_df = rename_and_reorder_columns(result_df)
 
     return result_df
 
@@ -239,8 +307,8 @@ def process_files(
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     """
-    Convierte un DataFrame a bytes de un archivo Excel (.xlsx) en memoria,
-    sin necesidad de escribir en disco. Listo para st.download_button.
+    Convierte un DataFrame a bytes .xlsx en memoria.
+    Listo para st.download_button.
     """
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -253,7 +321,6 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    # ── Configuración de página ──────────────────────────────────────────────
     st.set_page_config(
         page_title="Supply List Enricher",
         page_icon="📦",
@@ -263,7 +330,8 @@ def main():
     st.title("📦 Supply List Enricher")
     st.markdown(
         "Carga tu **Supply List** y el **Catálogo de Partes** para generar "
-        "automáticamente una tabla enriquecida lista para exportar."
+        "automáticamente una tabla enriquecida lista para exportar. "
+        "Acepta archivos **.xlsx**, **.xls** y **.csv**."
     )
     st.divider()
 
@@ -274,7 +342,7 @@ def main():
         st.subheader("📄 Supply List")
         supply_file = st.file_uploader(
             "Selecciona el archivo Supply List",
-            type=["xlsx", "xls"],
+            type=["xlsx", "xls", "csv"],
             key="supply",
         )
 
@@ -282,7 +350,7 @@ def main():
         st.subheader("📋 Catálogo de Partes")
         catalog_file = st.file_uploader(
             "Selecciona el Catálogo de Partes",
-            type=["xlsx", "xls"],
+            type=["xlsx", "xls", "csv"],
             key="catalog",
         )
 
@@ -291,7 +359,6 @@ def main():
     # ── Botón de procesamiento ───────────────────────────────────────────────
     if st.button("⚙️ Procesar archivos", type="primary", use_container_width=True):
 
-        # Validar que ambos archivos estén cargados antes de procesar
         if not supply_file:
             st.warning("⚠️ Por favor carga el archivo **Supply List**.")
             st.stop()
@@ -302,16 +369,12 @@ def main():
         with st.spinner("Procesando archivos..."):
             try:
                 result_df = process_files(supply_file, catalog_file)
-
-                # Guardar resultado en session_state para que persista entre
-                # reruns de Streamlit (evita reprocesar al hacer clic en descargar)
                 st.session_state["result_df"] = result_df
                 st.success(
                     f"✅ Procesamiento completado. "
-                    f"**{len(result_df):,} registros** generados con "
+                    f"**{len(result_df):,} registros** · "
                     f"**{len(result_df.columns)} columnas**."
                 )
-
             except ValueError as ve:
                 st.error(str(ve))
                 st.stop()
@@ -319,20 +382,17 @@ def main():
                 st.error(f"❌ Error inesperado: {ex}")
                 st.stop()
 
-    # ── Vista previa y descarga (solo si ya se procesó) ──────────────────────
+    # ── Vista previa y descarga ──────────────────────────────────────────────
     if "result_df" in st.session_state:
         result_df = st.session_state["result_df"]
 
         st.subheader("🔍 Vista previa del resultado")
         st.dataframe(result_df.head(50), use_container_width=True)
-
         st.caption(
             f"Mostrando las primeras 50 filas de {len(result_df):,} registros totales."
         )
 
-        # ── Botón de descarga ────────────────────────────────────────────────
         excel_bytes = to_excel_bytes(result_df)
-
         st.download_button(
             label="⬇️ Descargar Excel enriquecido",
             data=excel_bytes,
