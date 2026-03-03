@@ -35,7 +35,7 @@ SUPPLY_REQUIRED_COLS = [
 ]
 
 # Columnas que se requieren en el Catálogo de Partes
-CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "FraccionMx"]
+CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "FraccionMX"]
 
 # Mapeo de códigos ISO → nombre completo para la columna COO
 COO_MAP = {
@@ -93,7 +93,7 @@ def enrich_with_catalog(
         Catálogo     → "NumParte"
 
     Columnas agregadas al resultado:
-        Tim_Clave | Par_DescripcionEsp | FraccionMx
+        Tim_Clave | Par_DescripcionEsp | FraccionMX
 
     Registros sin coincidencia conservan NaN en esas columnas.
     """
