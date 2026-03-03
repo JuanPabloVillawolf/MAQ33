@@ -440,23 +440,26 @@ def enrich_with_catalog(
 
     return enriched_df
 
-
 def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     Crea la columna 'COO' a partir de 'County of Origin (Made In)'
-    usando el mapa COO_MAP. Conserva el valor original si no hay match.
+    usando el mapa COO_MAP.
+    
+    Reglas:
+    - Si el valor es NaN → NaN
+    - Si contiene "/" → NaN
+    - Si existe en COO_MAP → devuelve la clave
+    - Si no existe → conserva el valor original en mayúsculas
     """
     df = df.copy()
-    df["COO"] = (
-        df["County of Origin (Made In)"]
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        .map(lambda x: COO_MAP.get(x, x))
-    )
+
     df["COO"] = df["County of Origin (Made In)"].apply(
-    lambda x: np.nan if pd.isna(x) or "/" in str(x)
-    else COO_MAP.get(str(x).strip().upper(), str(x).strip().upper()))
+        lambda x: np.nan
+        if pd.isna(x) or "/" in str(x)
+        else COO_MAP.get(str(x).strip().upper(), str(x).strip().upper())
+    )
+
+    return df
 
 def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
     """
