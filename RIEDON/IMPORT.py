@@ -16,6 +16,7 @@ import io
 import numpy as np                  # ← necesario para np.nan en apply_coo_column
 import pandas as pd
 import streamlit as st
+import re
 
 
 # ─────────────────────────────────────────────────────────────────────────────
