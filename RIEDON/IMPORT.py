@@ -201,10 +201,32 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
+def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpia la columna 'Tracking Number' dejando únicamente el valor
+    sin el prefijo 'TRACKING' o 'TRACKING:'.
+    """
+    df = df.copy()
+
+    def _clean_value(val):
+        if pd.isna(val) or str(val).strip() == "":
+            return val
+        
+        val_str = str(val).strip()
+
+        # Elimina TRACKING o TRACKING:
+        if val_str.upper().startswith("TRACKING"):
+            val_str = val_str.replace("TRACKING:", "")
+            val_str = val_str.replace("TRACKING", "")
+        
+        return val_str.strip()
+
+    df["Tracking Number"] = df["Tracking Number"].apply(_clean_value)
+    return df
 
 def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Agrega el prefijo 'TRACKING ' a la columna 'Tracking Number'.
+    Agrega el prefijo 'TRACKING:' a la columna 'Tracking Number'.
     Omite NaN/vacíos y evita duplicar el prefijo.
     """
     df = df.copy()
@@ -212,23 +234,18 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     def _add_prefix(val):
         if pd.isna(val) or str(val).strip() == "":
             return val
+        
         val_str = str(val).strip()
-        if val_str.upper().startswith("TRACKING "):
+
+        if val_str.upper().startswith("TRACKING"):
             return val_str
+        
         return f"TRACKING: {val_str}"
 
-    df["Tracking Number"] = df["Tracking Number"]
+    df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
     return df
 
 
-def add_tracking_copy(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Crea la columna 'Tracking' como copia exacta de 'Tracking Number'
-    (ya con el prefijo aplicado).
-    """
-    df = df.copy()
-    df["Tracking"] = df["Tracking Number"].apply(_add_prefix)
-    return df
 
 
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
