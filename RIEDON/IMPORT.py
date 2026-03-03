@@ -324,14 +324,7 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_tracking_copy(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Crea la columna 'Tracking' como copia exacta de 'Tracking Number'
-    (con el prefijo 'TRACKING:' ya aplicado).
-    """
-    df = df.copy()
-    df["Tracking"] = df["Tracking Number"]
-    return df
+
 
 
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
