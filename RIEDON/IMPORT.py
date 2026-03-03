@@ -350,7 +350,8 @@ COO_MAP = {
     "ZAMBIA": "ZMB",
     "ZIMBABWE": "ZWE",
     "NETHERLANDS": "ZYA",
-    "KOREA": "KOR"
+    "KOREA": "KOR",
+    "CHINA": "CHN"
 }
 
 
@@ -453,9 +454,9 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
         .str.upper()
         .map(lambda x: COO_MAP.get(x, x))
     )
-    if "/" in COO_MAP:
-        return np.nan
-    return df
+    df["COO"] = df["Country of Origin"].apply(
+    lambda x: np.nan if pd.isna(x) or "/" in str(x)
+    else COO_MAP.get(str(x).strip().upper(), str(x).strip().upper()))
 
 def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
     """
