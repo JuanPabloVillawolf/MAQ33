@@ -453,13 +453,13 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
 
-    df["COO"] = df["County of Origin (Made In)"].apply(
+    df_COO = df["County of Origin (Made In)"].apply(
         lambda x: np.nan
         if pd.isna(x) or "/" in str(x)
         else COO_MAP.get(str(x).strip().upper(), str(x).strip().upper())
     )
 
-    return df
+    return df_COO
 
 def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
     """
