@@ -1,11 +1,12 @@
 """
 app.py — Supply List Enricher
-Versión : 1.0.0
+Versión : 1.1.0
 Descripción:
     Enriquece un Supply List con datos del Catálogo de Partes mediante
     un LEFT JOIN en "Part No." / "NumParte", aplica transformaciones de
-    COO y Tracking Number, y expone una interfaz Streamlit con carga de
-    archivos y descarga del resultado en formato Excel.
+    COO y Tracking Number, excluye columnas internas no deseadas, y
+    expone una interfaz Streamlit con carga de archivos y descarga del
+    resultado en formato Excel.
 
 Uso:
     streamlit run app.py
@@ -36,6 +37,30 @@ SUPPLY_REQUIRED_COLS = [
 
 # Columnas que se requieren en el Catálogo de Partes
 CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "FraccionMX"]
+
+# Columnas internas / administrativas que NO deben aparecer en el archivo final.
+# Si alguna no existe en el DataFrame, simplemente se ignora (errors="ignore").
+COLUMNS_TO_EXCLUDE = [
+    "Created By",
+    "Description",
+    "Brand",
+    "Model",
+    "Series",
+    "Other",
+    "Vendor Link",
+    "Supplier",
+    "Packing Slip Number",
+    "Shipping Company",
+    "Southbound Demand Level",
+    "Date of Shipment",
+    "Estimated Arrival Date",
+    "Tracking Received By",
+    "Actual Arrival Date",
+    "Status Invoice",
+    "Invoice Number",
+    "No. Entry Warehouse",
+    "Size of Entry Warehouse",
+]
 
 # Mapeo de códigos ISO → nombre completo para la columna COO
 COO_MAP = {
@@ -97,8 +122,7 @@ def enrich_with_catalog(
 
     Registros sin coincidencia conservan NaN en esas columnas.
     """
-    # Solo se toman las columnas necesarias del catálogo para evitar
-    # traer columnas extra al resultado final
+    # Solo se toman las columnas necesarias del catálogo
     catalog_slim = catalog_df[CATALOG_REQUIRED_COLS].copy()
 
     enriched_df = supply_df.merge(
@@ -153,6 +177,15 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Elimina del DataFrame las columnas listadas en COLUMNS_TO_EXCLUDE.
+    Las columnas que no existan en el DataFrame son ignoradas silenciosamente,
+    por lo que esta función es segura sin importar qué columnas extras haya.
+    """
+    return df.drop(columns=COLUMNS_TO_EXCLUDE, errors="ignore")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FUNCIÓN PRINCIPAL DE PROCESAMIENTO
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,7 +204,7 @@ def process_files(
 
     Retorna
     -------
-    DataFrame enriquecido y transformado, listo para exportar.
+    DataFrame enriquecido, transformado y sin columnas excluidas.
     """
     # ── 1. Lectura ──────────────────────────────────────────────────────────
     supply_df  = pd.read_excel(supply_file,  dtype=str)   # dtype=str evita
@@ -193,6 +226,9 @@ def process_files(
 
     # ── 5. Prefijo en Tracking Number ────────────────────────────────────────
     result_df = apply_tracking_prefix(result_df)
+
+    # ── 6. Eliminar columnas internas no deseadas ────────────────────────────
+    result_df = drop_excluded_columns(result_df)
 
     return result_df
 
