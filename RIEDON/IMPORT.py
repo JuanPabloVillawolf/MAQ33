@@ -36,7 +36,7 @@ SUPPLY_REQUIRED_COLS = [
 ]
 
 # Columnas que se requieren en el Catálogo de Partes
-CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "FraccionMX"]
+CATALOG_REQUIRED_COLS = ["NumParte", "Tim_Clave", "Par_DescripcionEsp", "UM", "FraccionMX"]
 
 # Columnas internas / administrativas que NO deben aparecer en el archivo final.
 # Si alguna no existe en el DataFrame, simplemente se ignora (errors="ignore").
