@@ -26,7 +26,7 @@ SUPPLY_REQUIRED_COLS = [
     "Po Number",
     "Qty",
     "Unit of Measure",
-    "Country of Origin",
+    "County of Origin (Made In)",
     "Unit Price (USD)",
     "Weight",
     "Weight Unit",
@@ -116,13 +116,13 @@ def enrich_with_catalog(
 
 def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Crea la columna 'COO' mapeando los códigos de 'Country of Origin'
+    Crea la columna 'COO' mapeando los códigos de 'County of Origin (Made In)'
     a su nombre completo según COO_MAP.
     Si el código no existe en el mapa, conserva el valor original.
     """
     df = df.copy()
     df["COO"] = (
-        df["Country of Origin"]
+        df["County of Origin (Made In)"]
         .astype(str)
         .str.strip()
         .str.upper()
