@@ -217,7 +217,7 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
             return val_str
         return f"TRACKING: {val_str}"
 
-    df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
+    df["Tracking Number"] = df["Tracking Number"]
     return df
 
 
@@ -227,7 +227,7 @@ def add_tracking_copy(df: pd.DataFrame) -> pd.DataFrame:
     (ya con el prefijo aplicado).
     """
     df = df.copy()
-    df["Tracking"] = df["Tracking Number"]
+    df["Tracking"] = df["Tracking Number"].apply(_add_prefix)
     return df
 
 
