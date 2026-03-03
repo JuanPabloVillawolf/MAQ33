@@ -16,7 +16,6 @@ import io
 import numpy as np                  # ← necesario para np.nan en apply_coo_column
 import pandas as pd
 import streamlit as st
-import re
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,49 +301,46 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
 
     df["COO"] = df["County of Origin (Made In)"].apply(_to_iso)
     return df                                       # ← retorna DataFrame completo
-    
-def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
+
+
+def clean_tracking_number(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Limpia la columna 'Tracking Number' eliminando cualquier prefijo
-    tipo 'TRACKING', 'TRACKING:', 'tracking ', etc.
-    Deja únicamente el valor puro.
+    Limpia la columna 'Tracking Number' dejando SOLO el valor puro,
+    sin ningún prefijo 'TRACKING' o 'TRACKING:'.
+
+    Ejemplo:  "TRACKING: 12345ABC"  →  "12345ABC"
     """
     df = df.copy()
 
     def _clean(val):
         if pd.isna(val) or str(val).strip() == "":
             return val
-        
         val_str = str(val).strip()
-
-        # Elimina cualquier variación inicial de TRACKING con o sin :
-        cleaned = re.sub(r'^tracking[:\s\-]*', '', val_str, flags=re.IGNORECASE)
-        return cleaned.strip()
+        if val_str.upper().startswith("TRACKING"):
+            val_str = val_str[8:].lstrip(": ").strip()   # elimina "TRACKING" + separador
+        return val_str
 
     df["Tracking Number"] = df["Tracking Number"].apply(_clean)
     return df
 
 
-def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
+def add_tracking_copy(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Agrega el prefijo estandarizado 'TRACKING: '
-    asegurando que no se duplique.
+    Crea la columna 'Tracking' con el prefijo 'TRACKING: ' + valor limpio
+    de 'Tracking Number'. Omite NaN/vacíos.
+
+    Ejemplo:  "12345ABC"  →  "TRACKING: 12345ABC"
     """
     df = df.copy()
 
     def _add_prefix(val):
         if pd.isna(val) or str(val).strip() == "":
             return val
-        
-        val_str = str(val).strip()
+        return f"TRACKING: {str(val).strip()}"
 
-        # Primero limpia cualquier prefijo previo
-        cleaned = re.sub(r'^tracking[:\s\-]*', '', val_str, flags=re.IGNORECASE)
-
-        return f"TRACKING: {cleaned.strip()}"
-
-    df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
+    df["Tracking"] = df["Tracking Number"].apply(_add_prefix)
     return df
+
 
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -398,10 +394,10 @@ def process_files(
     # ── 4. Columna COO (nombre país → ISO, "/" → NaN) ────────────────────────
     result_df = apply_coo_column(result_df)
 
-    # ── 5. Normalizar y prefijar Tracking Number ─────────────────────────────
-    result_df = apply_tracking_prefix(result_df)
+    # ── 5. Limpiar Tracking Number (solo el valor puro, sin prefijo) ────────────
+    result_df = clean_tracking_number(result_df)
 
-    # ── 6. Columna Tracking (copia de Tracking Number con prefijo) ───────────
+    # ── 6. Columna Tracking = "TRACKING: " + valor limpio ───────────────────
     result_df = add_tracking_copy(result_df)
 
     # ── 7. Eliminar columnas internas ────────────────────────────────────────
