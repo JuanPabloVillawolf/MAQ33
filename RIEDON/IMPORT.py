@@ -246,8 +246,6 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Elimina las columnas internas listadas en COLUMNS_TO_EXCLUDE.
@@ -306,13 +304,10 @@ def process_files(
     # ── 5. Prefijo TRACKING en Tracking Number ───────────────────────────────
     result_df = apply_tracking_prefix(result_df)
 
-    # ── 6. Columna Tracking (copia de Tracking Number) ───────────────────────
-    result_df = add_tracking_copy(result_df)
-
-    # ── 7. Eliminar columnas internas ────────────────────────────────────────
+    # ── 6. Eliminar columnas internas ────────────────────────────────────────
     result_df = drop_excluded_columns(result_df)
 
-    # ── 8. Renombrar y reordenar columnas finales ────────────────────────────
+    # ── 7. Renombrar y reordenar columnas finales ────────────────────────────
     result_df = rename_and_reorder_columns(result_df)
 
     return result_df
