@@ -454,7 +454,7 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
         .str.upper()
         .map(lambda x: COO_MAP.get(x, x))
     )
-    df["COO"] = df["Country of Origin"].apply(
+    df["COO"] = df["County of Origin (Made In)"].apply(
     lambda x: np.nan if pd.isna(x) or "/" in str(x)
     else COO_MAP.get(str(x).strip().upper(), str(x).strip().upper()))
 
