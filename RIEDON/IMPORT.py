@@ -452,7 +452,7 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
         .str.upper()
         .map(lambda x: COO_MAP.get(x, x))
     )
-    if "/" in country_str:
+    if "/" in COO_MAP:
         return np.nan
     return df
 
