@@ -215,7 +215,7 @@ def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
         val_str = str(val).strip()
         if val_str.upper().startswith("TRACKING "):
             return val_str
-        return f"TRACKING {val_str}"
+        return f"TRACKING: {val_str}"
 
     df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
     return df
