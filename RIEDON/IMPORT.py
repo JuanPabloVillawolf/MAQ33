@@ -349,7 +349,8 @@ COO_MAP = {
     "REPUBLIC OF SOUTH AFRICA": "ZAF",
     "ZAMBIA": "ZMB",
     "ZIMBABWE": "ZWE",
-    "NETHERLANDS": "ZYA"
+    "NETHERLANDS": "ZYA",
+    "KOREA": "KOR"
 }
 
 
