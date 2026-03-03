@@ -301,31 +301,49 @@ def apply_coo_column(df: pd.DataFrame) -> pd.DataFrame:
 
     df["COO"] = df["County of Origin (Made In)"].apply(_to_iso)
     return df                                       # ← retorna DataFrame completo
+    
+def extract_tracking_value(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpia la columna 'Tracking Number' eliminando cualquier prefijo
+    tipo 'TRACKING', 'TRACKING:', 'tracking ', etc.
+    Deja únicamente el valor puro.
+    """
+    df = df.copy()
+
+    def _clean(val):
+        if pd.isna(val) or str(val).strip() == "":
+            return val
+        
+        val_str = str(val).strip()
+
+        # Elimina cualquier variación inicial de TRACKING con o sin :
+        cleaned = re.sub(r'^tracking[:\s\-]*', '', val_str, flags=re.IGNORECASE)
+        return cleaned.strip()
+
+    df["Tracking Number"] = df["Tracking Number"].apply(_clean)
+    return df
 
 
 def apply_tracking_prefix(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Primero limpia cualquier prefijo 'TRACKING' o 'TRACKING:' existente,
-    luego agrega el prefijo estandarizado 'TRACKING: ' a Tracking Number.
-    Omite NaN/vacíos.
+    Agrega el prefijo estandarizado 'TRACKING: '
+    asegurando que no se duplique.
     """
     df = df.copy()
 
-    def _normalize(val):
+    def _add_prefix(val):
         if pd.isna(val) or str(val).strip() == "":
             return val
+        
         val_str = str(val).strip()
-        # Limpiar prefijo anterior (cualquier variante)
-        if val_str.upper().startswith("TRACKING"):
-            val_str = val_str[8:].lstrip(": ").strip()   # elimina "TRACKING" + separador
-        return f"TRACKING: {val_str}"
 
-    df["Tracking Number"] = df["Tracking Number"].apply(_normalize)
+        # Primero limpia cualquier prefijo previo
+        cleaned = re.sub(r'^tracking[:\s\-]*', '', val_str, flags=re.IGNORECASE)
+
+        return f"TRACKING: {cleaned.strip()}"
+
+    df["Tracking Number"] = df["Tracking Number"].apply(_add_prefix)
     return df
-
-
-
-
 
 def drop_excluded_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
