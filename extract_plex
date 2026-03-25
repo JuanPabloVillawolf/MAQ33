@@ -1,1 +1,310 @@
+"""
+PLEX Cost Extractor v3
+======================
+- Login manual con Bitwarden
+- Navega via LaunchPage > Favorites > Parts (no hardcodea URL interna)
+- Click en primer link de resultados (no busca por texto exacto)
+- Soporte para Rev: selecciona fila con revisión exacta
+- Detecta sesión expirada y espera re-login automáticamente
 
+Requisitos:
+    pip install playwright pandas openpyxl
+    playwright install chromium
+"""
+
+import time
+import pandas as pd
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+# ─────────────────────────────────────────────
+#  CONFIGURACIÓN — ajusta estas variables
+# ─────────────────────────────────────────────
+
+EXCEL_INPUT     = "seer_export.xlsx"
+EXCEL_OUTPUT    = "seer_export_con_costos.xlsx"
+COLUMNA_PART_NO = "NumParte"
+COLUMNA_REV     = "Rev"
+COLUMNA_COSTO   = "Unit Price (USD)"
+
+PLEX_URL = "https://riedon.on.plex.com"
+HEADLESS = False
+DELAY_ENTRE_PARTES = 1.5
+
+
+# ─────────────────────────────────────────────
+#  LOGIN MANUAL
+# ─────────────────────────────────────────────
+
+def login_manual(page):
+    print("\n🌐 Abriendo PLEX...")
+    # Navegar directo a LaunchPage — PLEX redirige al login automáticamente
+    page.goto("https://riedon.on.plex.com/Platform/LaunchPage")
+    page.wait_for_load_state("networkidle")
+
+    print("\n" + "="*55)
+    print("  👤 Por favor inicia sesión manualmente en el navegador.")
+    print("  Bitwarden llenará tus credenciales automáticamente.")
+    print("  El script continuará solo cuando detecte que ya entraste.")
+    print("="*55 + "\n")
+
+    page.wait_for_url("**/LaunchPage**", timeout=120000)
+    print("✅ Login detectado. Iniciando extracción...\n")
+
+
+# ─────────────────────────────────────────────
+#  NAVEGACIÓN
+# ─────────────────────────────────────────────
+
+def verificar_sesion(page):
+    if "sign-in" in page.url.lower() or "login" in page.url.lower() or "accounts.plex" in page.url.lower():
+        print("\n⚠️  Sesión expirada. Por favor vuelve a iniciar sesión en el navegador.")
+        page.wait_for_url("**/LaunchPage**", timeout=120000)
+        print("✅ Sesión restaurada. Continuando...\n")
+
+
+def ir_a_parts(page, url_directa=None):
+    url = url_directa if url_directa else "https://riedon.on.plex.com/Engineering/Part"
+    page.goto(url)
+    page.wait_for_load_state("networkidle")
+    verificar_sesion(page)
+
+
+def buscar_parte(page, part_no, rev=None):
+    # Encontrar campo Part No
+    campo = None
+    for selector in [
+        'input[name*="Part_No" i]',
+        'input[name*="PartNo" i]',
+        'input[id*="Part_No" i]',
+        'input[id*="PartNo" i]',
+    ]:
+        try:
+            loc = page.locator(selector).first
+            if loc.count() > 0:
+                loc.wait_for(state="visible", timeout=2000)
+                campo = loc
+                break
+        except:
+            continue
+
+    if campo is None:
+        campo = page.locator('input[type="text"]:visible').first
+
+    campo.click()
+    campo.fill(str(part_no))
+
+    page.locator('input[value="Search"], button:has-text("Search")').first.click()
+    page.wait_for_load_state("networkidle")
+
+    # Sin Rev: esperar a que el link sea visible y hacer click
+    if not rev:
+        link = page.locator('a.plex-grid-link').first
+        try:
+            link.wait_for(state="visible", timeout=8000)
+        except PlaywrightTimeout:
+            print(f"  ⚠️  Part No '{part_no}' no encontrado o tabla no cargó")
+            return False
+        texto = link.inner_text().strip()
+        print(f"  🔍 Entrando a: {texto}")
+        link.click()
+        page.wait_for_load_state("networkidle")
+        return True
+
+    # Con Rev: buscar la fila que coincida exactamente usando clases de PLEX
+    filas = page.locator('tr.plex-grid-row')
+    for i in range(filas.count()):
+        fila      = filas.nth(i)
+        link_part = fila.locator('a.plex-grid-link').first
+        if link_part.count() == 0:
+            continue
+        texto_part = link_part.inner_text().strip()
+        texto_rev  = fila.locator('td[data-col-index="1"]').inner_text().strip()
+        if texto_rev.upper() == str(rev).upper():
+            print(f"  🔍 Encontrado: {texto_part}-{rev}")
+            link_part.click()
+            page.wait_for_load_state("networkidle")
+            return True
+
+    print(f"  ⚠️  Part No '{part_no}' Rev '{rev}' no encontrado en PLEX")
+    return False
+
+
+def ir_a_exploded_cost(page):
+    page.locator('text=Exploded Cost Structure').first.click()
+    page.wait_for_load_state("networkidle")
+    page.locator('input[value="Search"], button:has-text("Search")').first.click()
+    page.wait_for_load_state("networkidle")
+
+
+def extraer_datos_cost_structure(page):
+    """
+    Extrae el costo Total y el Part No real que muestra PLEX
+    en la pantalla de Exploded Cost Structure.
+    Retorna (costo, descripcion_plex) o (None, None) si falla.
+    """
+    costo = None
+    descripcion = None
+
+    # Extraer costo Total
+    try:
+        fila_total  = page.locator('tr:has(td:has-text("Total"))').last
+        costo_texto = fila_total.locator('td').last.inner_text().strip()
+        costo = float(costo_texto.replace(",", ""))
+    except Exception as e:
+        print(f"  ⚠️  No se pudo extraer el costo: {e}")
+
+    # Extraer el Part No real de PLEX (campo Part No en el filtro superior)
+    try:
+        campo_part = page.locator('.plex-data-label, span.plex-data-label').first
+        descripcion = campo_part.inner_text().strip()
+    except Exception as e:
+        print(f"  ⚠️  No se pudo extraer la descripción: {e}")
+
+    return costo, descripcion
+
+
+def volver_a_parts(page, url_directa=None):
+    try:
+        page.locator('text=View Parts').first.click()
+        page.wait_for_load_state("networkidle")
+    except PlaywrightTimeout:
+        ir_a_parts(page, url_directa)
+
+
+# ─────────────────────────────────────────────
+#  UTILIDADES
+# ─────────────────────────────────────────────
+
+def tiene_rev(valor):
+    if valor is None:
+        return False
+    return str(valor).strip() not in ("", "nan", "None", "NaN")
+
+
+def formatear_clave(part_no, rev):
+    if tiene_rev(rev):
+        return f"{str(part_no).strip()}-{str(rev).strip()}"
+    return str(part_no).strip()
+
+
+# ─────────────────────────────────────────────
+#  FLUJO PRINCIPAL
+# ─────────────────────────────────────────────
+
+def main():
+    print(f"📂 Leyendo archivo: {EXCEL_INPUT}")
+    df = pd.read_excel(EXCEL_INPUT, dtype=str)
+
+    if COLUMNA_PART_NO not in df.columns:
+        raise ValueError(
+            f"No se encontró la columna '{COLUMNA_PART_NO}'.\n"
+            f"Columnas disponibles: {list(df.columns)}"
+        )
+
+    tiene_columna_rev = COLUMNA_REV in df.columns
+    if not tiene_columna_rev:
+        print(f"  ℹ️  Columna '{COLUMNA_REV}' no encontrada — procesando sin revisión.")
+
+    if COLUMNA_COSTO not in df.columns:
+        df[COLUMNA_COSTO] = None
+
+    if tiene_columna_rev:
+        pares = df[[COLUMNA_PART_NO, COLUMNA_REV]].dropna(subset=[COLUMNA_PART_NO])
+        pares = pares.drop_duplicates().values.tolist()
+    else:
+        pares = [(p, None) for p in df[COLUMNA_PART_NO].dropna().unique()]
+
+    print(f"📋 Total de registros únicos a procesar: {len(pares)}\n")
+
+    resultados      = {}   # { clave: costo }
+    descripciones   = {}   # { clave: descripcion PLEX }
+    url_parts       = None
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel="msedge", headless=HEADLESS)
+        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        page    = context.new_page()
+
+        login_manual(page)
+
+        for i, (part_no, rev) in enumerate(pares, 1):
+            rev_val = rev if tiene_columna_rev else None
+            clave   = formatear_clave(part_no, rev_val)
+            print(f"[{i}/{len(pares)}] {clave}")
+
+            try:
+                ir_a_parts(page, url_directa=url_parts)
+
+                if url_parts is None:
+                    url_parts = page.url
+                    print(f"  📌 URL de Parts: {url_parts}")
+
+                encontrado = buscar_parte(
+                    page, part_no,
+                    rev=str(rev_val).strip() if tiene_rev(rev_val) else None
+                )
+
+                if not encontrado:
+                    resultados[clave] = None
+                    continue
+
+                ir_a_exploded_cost(page)
+                costo, descripcion = extraer_datos_cost_structure(page)
+
+                if costo is not None:
+                    print(f"  💰 Costo Total: {costo}")
+                if descripcion is not None:
+                    print(f"  🏷️  Descripción PLEX: {descripcion}")
+                resultados[clave]    = costo
+                descripciones[clave] = descripcion
+
+                volver_a_parts(page, url_directa=url_parts)
+                time.sleep(DELAY_ENTRE_PARTES)
+
+            except Exception as e:
+                print(f"  ❌ Error en {clave}: {e}")
+                resultados[clave] = None
+                try:
+                    ir_a_parts(page, url_directa=url_parts)
+                except:
+                    pass
+
+        browser.close()
+
+    # ── Escribir resultados fila por fila ──
+    costos_col        = []
+    descripciones_col = []
+
+    for _, row in df.iterrows():
+        clave = formatear_clave(
+            row[COLUMNA_PART_NO],
+            row[COLUMNA_REV] if tiene_columna_rev else None
+        )
+        costos_col.append(resultados.get(clave, None))
+        descripciones_col.append(descripciones.get(clave, None))
+
+    df[COLUMNA_COSTO] = costos_col
+
+    # Insertar columna NumParte+Rev al lado de NumParte
+    if "NumParte+Rev" in df.columns:
+        df.drop(columns=["NumParte+Rev"], inplace=True)
+    df.insert(
+        df.columns.get_loc(COLUMNA_PART_NO) + 1,
+        "NumParte+Rev",
+        descripciones_col
+    )
+
+    df.to_excel(EXCEL_OUTPUT, index=False)
+
+    encontrados    = sum(1 for v in resultados.values() if v is not None)
+    no_encontrados = len(resultados) - encontrados
+
+    print(f"\n{'='*45}")
+    print(f"✅ Proceso completado → {EXCEL_OUTPUT}")
+    print(f"   ✔  Con costo:        {encontrados}")
+    print(f"   ✘  Sin costo/error:  {no_encontrados}")
+    print(f"{'='*45}\n")
+
+
+if __name__ == "__main__":
+    main()
