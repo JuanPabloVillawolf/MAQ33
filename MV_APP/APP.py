@@ -15,7 +15,7 @@ from openpyxl.utils import get_column_letter
 # CONFIG
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Validador Manifiesto de Valor",
+    page_title="Validador CCP vs ACEM",
     page_icon="🔍",
     layout="wide",
 )
@@ -29,6 +29,7 @@ KEYWORDS = {
     "cantidad": ["cantidad", "piezas", "pieces", "qty", "units", "unidades"],
     "peso":     ["peso", "weight", "kg", "kilogram"],
     "valor":    ["valor", "value", "monto", "amount", "importe", "usd"],
+    "factura":  ["factura", "invoice", "inv", "no factura", "num factura", "bill"],
 }
 
 # ─────────────────────────────────────────────
@@ -66,7 +67,7 @@ def extract_pdf_data(pdf_file) -> dict:
     Intenta detectar patrones de forma flexible.
     """
     result = {"value": None, "weight": None, "pieces": None,
-              "ref": None, "consignee": None, "raw_text": ""}
+              "ref": None, "consignee": None, "facturas": [], "raw_text": ""}
     try:
         with pdfplumber.open(pdf_file) as pdf:
             full_text = "\n".join(
@@ -102,6 +103,14 @@ def extract_pdf_data(pdf_file) -> dict:
         if m:
             result["value"] = parse_number(m.group(1))
 
+        # Facturas ─ después de INV#  (ej: "INV# RPT-0401-ENS / RIN-0090-ENS")
+        m = re.search(r"INV#\s+(.+?)(?:\n|$)", full_text, re.IGNORECASE)
+        if m:
+            raw_inv = m.group(1).strip()
+            result["facturas"] = [
+                f.strip() for f in re.split(r"\s*/\s*", raw_inv) if f.strip()
+            ]
+
     except Exception as e:
         st.error(f"Error leyendo PDF: {e}")
     return result
@@ -122,6 +131,21 @@ def pct(diff: float, base: float) -> str:
     if base and base != 0:
         return f"{(diff / base * 100):+.4f}%"
     return "N/A"
+
+
+def compare_facturas(excel_set: set[str], pdf_set: set[str]) -> dict:
+    """Compara los conjuntos de facturas entre Excel y PDF."""
+    en_ambos   = sorted(excel_set & pdf_set)
+    solo_excel = sorted(excel_set - pdf_set)
+    solo_pdf   = sorted(pdf_set  - excel_set)
+    return {
+        "en_ambos":    en_ambos,
+        "solo_excel":  solo_excel,
+        "solo_pdf":    solo_pdf,
+        "total_excel": len(excel_set),
+        "total_pdf":   len(pdf_set),
+        "ok":          len(solo_excel) == 0 and len(solo_pdf) == 0,
+    }
 
 
 # ─────────────────────────────────────────────
@@ -152,6 +176,7 @@ def build_excel_report(
     df_lines: pd.DataFrame,
     comparison: list[dict],
     meta: dict,
+    fact_result: dict | None = None,
 ) -> bytes:
     wb = Workbook()
 
@@ -331,6 +356,46 @@ def build_excel_report(
     ws3.column_dimensions["A"].width = 35
     ws3.column_dimensions["B"].width = 35
 
+    # ── Sección de facturas en Hoja 3 ──
+    if fact_result:
+        start = len(diag_rows) + 5   # deja una fila en blanco
+        ws3.cell(start, 1).value = "VALIDACIÓN DE FACTURAS (INV#)"
+        ws3.cell(start, 1).font  = Font(bold=True, color=WHITE, size=11)
+        ws3.cell(start, 1).fill  = PatternFill("solid", fgColor=BLUE_H)
+        ws3.cell(start, 1).border = border
+        ws3.cell(start, 2).fill  = PatternFill("solid", fgColor=BLUE_H)
+        ws3.cell(start, 2).border = border
+        ws3.row_dimensions[start].height = 20
+
+        fact_hdr = ["Factura", "En Excel", "En PDF (INV#)", "Estado"]
+        hdr_style(ws3, start + 1, range(1, len(fact_hdr) + 1))
+        for j, h in enumerate(fact_hdr, 1):
+            ws3.cell(start + 1, j).value = h
+
+        all_inv = sorted(
+            set(fact_result.get("en_ambos", []))
+            | set(fact_result.get("solo_excel", []))
+            | set(fact_result.get("solo_pdf", []))
+        )
+        for idx, inv in enumerate(all_inv, start + 2):
+            en_xl  = inv in fact_result.get("en_ambos", []) + fact_result.get("solo_excel", [])
+            en_pdf = inv in fact_result.get("en_ambos", []) + fact_result.get("solo_pdf", [])
+            if en_xl and en_pdf:
+                estado_f, bg_f, fg_f = "✅ Coincide", GREEN, GREEN_F
+            elif en_xl:
+                estado_f, bg_f, fg_f = "🔴 Solo en Excel", RED, RED_F
+            else:
+                estado_f, bg_f, fg_f = "🔴 Solo en PDF", RED, RED_F
+
+            vals = [inv, "✔" if en_xl else "✘", "✔" if en_pdf else "✘", estado_f]
+            for j, v in enumerate(vals, 1):
+                c = ws3.cell(idx, j)
+                c.value = v
+                c.fill  = PatternFill("solid", fgColor=bg_f)
+                c.font  = Font(color=fg_f, size=10)
+                c.border = border
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -445,16 +510,33 @@ def main():
 
     # ── MÉTRICAS ──
     st.subheader("📊 Resumen de validación")
-    c1, c2, c3, c4 = st.columns(4)
+
+    # Comparación de facturas
+    col_factura = col_map.get("factura")
+    if col_factura and col_factura in df.columns:
+        excel_facturas = set(df[col_factura].dropna().astype(str).str.strip().unique())
+    else:
+        excel_facturas = set()
+
+    pdf_facturas = set(pdf_data.get("facturas", []))
+    fact_result  = compare_facturas(excel_facturas, pdf_facturas)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     total_c = len(comparison)
     exact_c = sum(1 for r in comparison if r["estado"] == "Exacto")
     redond_c = sum(1 for r in comparison if r["estado"] == "Redondeo")
     discr_c  = sum(1 for r in comparison if r["estado"] == "Discrepancia")
+    fact_ok  = fact_result["ok"]
+
     c1.metric("Campos comparados", total_c)
     c2.metric("🟢 Exactos",        exact_c)
     c3.metric("🟡 Redondeo",       redond_c)
     c4.metric("🔴 Discrepancias",  discr_c,
               delta="REVISAR" if discr_c > 0 else None,
+              delta_color="inverse")
+    c5.metric("🧾 Facturas",
+              f"{len(fact_result['en_ambos'])}/{max(fact_result['total_excel'], fact_result['total_pdf'])}",
+              delta=None if fact_ok else "Sin coincidencia",
               delta_color="inverse")
 
     # ── SEMÁFORO PRINCIPAL ──
@@ -464,6 +546,66 @@ def main():
         st.warning("🟡 Los documentos son consistentes. Las diferencias se deben únicamente a redondeo.")
     else:
         st.error("🔴 Se detectaron discrepancias críticas. Revisa el reporte detallado.")
+
+    # ── SEMÁFORO FACTURAS ──
+    if not excel_facturas and not pdf_facturas:
+        st.info("⚪ No se encontró la columna de facturas en el Excel ni facturas en el PDF.")
+    elif fact_result["ok"]:
+        st.success(
+            f"✅ Facturas coinciden — {len(fact_result['en_ambos'])} factura(s) presentes en ambos documentos: "
+            f"**{', '.join(fact_result['en_ambos'])}**"
+        )
+    else:
+        msgs = []
+        if fact_result["solo_excel"]:
+            msgs.append(f"Solo en Excel: **{', '.join(fact_result['solo_excel'])}**")
+        if fact_result["solo_pdf"]:
+            msgs.append(f"Solo en PDF: **{', '.join(fact_result['solo_pdf'])}**")
+        st.error("🔴 Discrepancia en facturas — " + " | ".join(msgs))
+
+    st.divider()
+
+    # ── DETALLE FACTURAS ──
+    st.subheader("🧾 Validación de facturas (INV#)")
+
+    # Construir tabla fila a fila
+    all_facturas = sorted(excel_facturas | pdf_facturas)
+    if all_facturas:
+        rows_fact = []
+        for inv in all_facturas:
+            en_xl  = inv in excel_facturas
+            en_pdf = inv in pdf_facturas
+            if en_xl and en_pdf:
+                estado_f, emoji_f = "Coincide", "🟢"
+            elif en_xl:
+                estado_f, emoji_f = "Solo en Excel", "🔴"
+            else:
+                estado_f, emoji_f = "Solo en PDF", "🔴"
+            rows_fact.append({
+                "Factura":         inv,
+                "En Excel":        "✔" if en_xl  else "✘",
+                "En PDF (INV#)":   "✔" if en_pdf else "✘",
+                "Estado":          f"{emoji_f} {estado_f}",
+            })
+        df_fact = pd.DataFrame(rows_fact)
+
+        def highlight_fact(row):
+            if "Coincide"    in row["Estado"]: return ["background-color:#c6efce"] * len(row)
+            if "Solo en"     in row["Estado"]: return ["background-color:#ffc7ce"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(
+            df_fact.style.apply(highlight_fact, axis=1),
+            use_container_width=True, hide_index=True,
+        )
+
+        # Fuente de extracción
+        if not col_factura:
+            st.caption("⚠️ Columna de factura no detectada en el Excel — selecciónala manualmente en '🔧 Columnas detectadas'.")
+        else:
+            st.caption(f"Columna Excel usada: **{col_factura}** · Facturas extraídas del PDF tras INV#: {pdf_facturas or '(ninguna)'}")
+    else:
+        st.info("No hay facturas para comparar. Verifica que el PDF contenga una línea INV# y que el Excel tenga columna de factura.")
 
     st.divider()
 
@@ -522,7 +664,7 @@ def main():
     }
 
     # ── EXPORTAR EXCEL ──
-    excel_bytes = build_excel_report(df, comparison, meta)
+    excel_bytes = build_excel_report(df, comparison, meta, fact_result)
     st.download_button(
         label="⬇️ Descargar reporte en Excel",
         data=excel_bytes,
