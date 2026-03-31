@@ -15,7 +15,7 @@ from openpyxl.utils import get_column_letter
 # CONFIG
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Validador CCP vs ACEM",
+    page_title="Validador Manifiesto de Valor",
     page_icon="🔍",
     layout="wide",
 )
