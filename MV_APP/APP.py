@@ -406,19 +406,19 @@ def build_excel_report(
 # ─────────────────────────────────────────────
 
 def main():
-    st.title("🔍 Validador Documental — CCP-EFO vs Manifiesto ACEM")
-    st.caption("Comparación automática de valores entre el archivo Excel del SEER y el manifiesto electrónico ACEM.")
+    st.title("🔍 Validador Manifestacion de Valor")
+    st.caption("Comparación automática de valores")
 
     # ── Sidebar ──
     with st.sidebar:
         st.header("📁 Cargar archivos")
         excel_file = st.file_uploader(
-            "Excel (CCP-EFO)",
+            "Excel (CCP)",
             type=["xlsx", "xls"],
             help="Exportación del SEER Tráfico con columnas de cantidad, peso y valor."
         )
         pdf_file = st.file_uploader(
-            "PDF (Manifiesto ACEM)",
+            "PDF (Manifiesto)",
             type=["pdf"],
             help="Manifiesto electrónico generado por el sistema ACE."
         )
