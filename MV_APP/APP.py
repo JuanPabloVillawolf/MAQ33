@@ -28,64 +28,107 @@ KEYWORDS = {
 }
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS — tema oscuro navy / verde / ámbar
+# CUSTOM CSS — tema claro profesional
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] { background: #0b1120; }
-[data-testid="stHeader"]           { background: transparent; }
-[data-testid="stSidebar"]          { background: #111827; border-right: 1px solid #1f2d45; }
-[data-testid="stSidebar"] *        { color: #cbd5e1 !important; }
-[data-testid="stSidebar"] label    { color: #94a3b8 !important; font-size: 0.82rem !important; }
-
-html, body, [class*="css"]  { color: #e2e8f0; }
-h1, h2, h3, h4              { color: #f1f5f9 !important; }
-p, span, div                { color: #cbd5e1; }
-
-[data-testid="metric-container"] {
-    background: #1a2540; border: 1px solid #1f3358;
-    border-radius: 12px; padding: 1rem 1.2rem;
+/* ── Base ── */
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(160deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%);
+    min-height: 100vh;
 }
+[data-testid="stHeader"] { background: transparent; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #ffffff;
+    border-right: 1px solid #e2e8f0;
+    box-shadow: 2px 0 12px rgba(0,0,0,.04);
+}
+[data-testid="stSidebar"] * { color: #334155 !important; }
+[data-testid="stSidebar"] label { color: #64748b !important; font-size: 0.82rem !important; }
+[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    background: #f8fafc; border: 1.5px dashed #cbd5e1;
+    border-radius: 10px; padding: .5rem;
+}
+
+/* ── Global text ── */
+html, body, [class*="css"]  { color: #1e293b; }
+h1, h2, h3, h4              { color: #0f172a !important; }
+
+/* ── Metric cards ── */
+[data-testid="metric-container"] {
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,.05);
+    transition: box-shadow .2s;
+}
+[data-testid="metric-container"]:hover { box-shadow: 0 4px 16px rgba(0,0,0,.09); }
 [data-testid="metric-container"] label {
-    color: #94a3b8 !important; font-size: 0.78rem !important;
-    text-transform: uppercase; letter-spacing: .04em;
+    color: #64748b !important; font-size: 0.76rem !important;
+    text-transform: uppercase; letter-spacing: .06em; font-weight: 600 !important;
 }
 [data-testid="metric-container"] [data-testid="stMetricValue"] {
-    color: #f1f5f9 !important; font-size: 1.8rem !important; font-weight: 600 !important;
+    color: #0f172a !important; font-size: 1.9rem !important; font-weight: 700 !important;
 }
-[data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
+[data-testid="stMetricDelta"] { font-size: 0.77rem !important; }
 
-[data-testid="stDataFrame"]   { border: 1px solid #1f3358; border-radius: 10px; overflow: hidden; }
-iframe                        { border-radius: 10px; }
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] {
+    border: 1.5px solid #e2e8f0; border-radius: 12px;
+    overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+iframe { border-radius: 12px; }
 
-[data-testid="stExpander"]         { background: #131f35; border: 1px solid #1f3358; border-radius: 10px; }
-[data-testid="stExpander"] summary { color: #94a3b8 !important; }
+/* ── Expanders ── */
+[data-testid="stExpander"] {
+    background: #ffffff; border: 1.5px solid #e2e8f0;
+    border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.04);
+}
+[data-testid="stExpander"] summary { color: #475569 !important; font-weight: 500 !important; }
 
+/* ── Alerts ── */
+[data-testid="stAlert"] { border-radius: 12px !important; font-weight: 500; }
+
+/* ── Download button ── */
 [data-testid="stDownloadButton"] button {
-    background: #166534 !important; color: #dcfce7 !important;
-    border: 1px solid #22c55e !important; border-radius: 8px;
-    font-weight: 600; padding: .55rem 1.4rem; transition: background .2s;
+    background: linear-gradient(135deg, #059669, #0d9488) !important;
+    color: #ffffff !important; border: none !important;
+    border-radius: 10px; font-weight: 600;
+    padding: .6rem 1.6rem; transition: opacity .2s, transform .15s;
+    box-shadow: 0 2px 8px rgba(5,150,105,.3);
 }
-[data-testid="stDownloadButton"] button:hover { background: #15803d !important; }
+[data-testid="stDownloadButton"] button:hover {
+    opacity: .9 !important; transform: translateY(-1px) !important;
+}
 
+/* ── Inputs ── */
 input[type="number"], input[type="text"] {
-    background: #1a2540 !important; border: 1px solid #1f3358 !important;
-    color: #f1f5f9 !important; border-radius: 6px !important;
+    background: #f8fafc !important; border: 1.5px solid #cbd5e1 !important;
+    color: #0f172a !important; border-radius: 8px !important;
 }
-hr { border-color: #1f3358 !important; margin: 1.6rem 0 !important; }
 
-[data-testid="stFileUploader"] {
-    background: #131f35; border: 1px dashed #1f3358; border-radius: 10px; padding: .6rem;
+/* ── Divider ── */
+hr { border-color: #e2e8f0 !important; margin: 1.6rem 0 !important; }
+
+/* ── Custom components ── */
+.mv-header-bar {
+    background: linear-gradient(135deg, #0f766e 0%, #0369a1 100%);
+    border-radius: 16px; padding: 1.5rem 2rem; margin-bottom: 1.5rem;
+    box-shadow: 0 4px 20px rgba(15,118,110,.25);
 }
 .mv-card {
-    background: #131f35; border: 1px solid #1f3358; border-radius: 12px;
-    padding: 1.2rem 1.5rem; margin-bottom: 1.2rem;
+    background: #ffffff; border: 1.5px solid #e2e8f0;
+    border-radius: 14px; padding: 1.2rem 1.5rem; margin-bottom: 1rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
 .mv-card-title {
-    font-size: .72rem; font-weight: 700; letter-spacing: .08em;
-    text-transform: uppercase; color: #475569; margin-bottom: .3rem;
+    font-size: .68rem; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: #94a3b8; margin-bottom: .3rem;
 }
-.mv-card-value { font-size: 1rem; font-weight: 500; color: #f1f5f9; }
+.mv-card-value { font-size: 1rem; font-weight: 600; color: #0f172a; }
 .section-label {
     font-size: .68rem; font-weight: 700; letter-spacing: .1em;
     text-transform: uppercase; color: #475569; margin-bottom: .5rem;
@@ -149,11 +192,17 @@ def extract_pdf_data(pdf_file) -> dict:
         if m:
             result["value"] = parse_number(m.group(1))
 
-        m = re.search(r"INV#\s+(.+?)(?:\n|$)", full_text, re.IGNORECASE)
-        if m:
-            result["facturas"] = [
-                f.strip() for f in re.split(r"\s*/\s*", m.group(1).strip()) if f.strip()
-            ]
+        # ── Extracción universal de facturas ──────────────────────────────────
+        # Los códigos de factura siempre siguen el patrón: LETRAS-NUMEROS-LETRAS
+        # (ej: RPT-0398-ENS, RIN-0085-ENS, RSCARP-0027-ENS)
+        # Funciona con INV#, INV sin #, o sin prefijo ninguno.
+        INVOICE_RE = re.compile(r'\b([A-Z][A-Z0-9]*-\d{3,5}-[A-Z]+)\b', re.IGNORECASE)
+        found = INVOICE_RE.findall(full_text)
+        # Excluir falsos positivos conocidos: refs de manifiesto tipo GSJA924294
+        result["facturas"] = [
+            f.upper() for f in found
+            if not re.match(r'^GSJA\d+$', f, re.IGNORECASE)
+        ]
     except Exception as e:
         st.error(f"Error leyendo PDF: {e}")
     return result
@@ -339,11 +388,11 @@ def build_excel_report(df_lines, comparison, meta, fact_result=None) -> bytes:
 
 def main():
     st.markdown("""
-    <div style="padding:1.4rem 0 .5rem 0">
-      <h1 style="margin:0;font-size:1.65rem;font-weight:700;color:#f1f5f9">
+    <div class="mv-header-bar">
+      <h1 style="margin:0;font-size:1.6rem;font-weight:700;color:#ffffff;letter-spacing:-.01em">
         🔍 Validador Manifestación de Valor
       </h1>
-      <p style="margin:.3rem 0 0 0;color:#475569;font-size:.88rem">
+      <p style="margin:.3rem 0 0 0;color:rgba(255,255,255,.72);font-size:.88rem">
         Comparación automática de valores entre el archivo Excel del SEER y el Manifiesto ACEM
       </p>
     </div>
@@ -352,23 +401,26 @@ def main():
 
     # ── Sidebar ──
     with st.sidebar:
-        st.markdown('<p class="section-label" style="margin-top:.4rem">Archivos de entrada</p>',
+        st.markdown('<p class="section-label" style="margin-top:.4rem;color:#94a3b8">Archivos de entrada</p>',
                     unsafe_allow_html=True)
         excel_file = st.file_uploader("📊 Excel — CCP / EFO", type=["xlsx","xls"])
         pdf_file   = st.file_uploader("📄 PDF — Manifiesto ACEM", type=["pdf"])
         st.divider()
-        st.markdown('<p class="section-label">Tolerancias de validación</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-label" style="color:#94a3b8">Tolerancias de validación</p>', unsafe_allow_html=True)
         tol_peso  = st.number_input("Peso (Kg)",   value=TOLERANCE_PESO,  step=0.1, format="%.2f")
         tol_valor = st.number_input("Valor (USD)",  value=TOLERANCE_VALOR, step=0.1, format="%.2f")
 
     if not excel_file or not pdf_file:
         st.markdown("""
-        <div style="background:#131f35;border:1px dashed #1f3358;border-radius:14px;
-                    padding:3.5rem 2rem;text-align:center;margin-top:1.5rem">
+        <div style="background:#ffffff;border:1.5px dashed #cbd5e1;border-radius:16px;
+                    padding:3.5rem 2rem;text-align:center;margin-top:1rem;
+                    box-shadow:0 2px 8px rgba(0,0,0,.04)">
           <p style="font-size:2.5rem;margin:0">📂</p>
-          <p style="color:#64748b;margin:.7rem 0 0 0;font-size:1rem">
-            Sube el <strong style="color:#94a3b8">Excel</strong> y el
-            <strong style="color:#94a3b8">PDF</strong> en el panel izquierdo
+          <p style="color:#64748b;margin:.7rem 0 .3rem 0;font-size:1rem;font-weight:500">
+            Sube los archivos en el panel izquierdo
+          </p>
+          <p style="color:#94a3b8;font-size:.84rem;margin:0">
+            Excel (CCP / EFO) · PDF (Manifiesto ACEM)
           </p>
         </div>
         """, unsafe_allow_html=True)
@@ -447,14 +499,14 @@ def main():
     <div class="mv-card" style="display:flex;gap:2.5rem;flex-wrap:wrap;align-items:center">
       <div>
         <div class="mv-card-title">Referencia</div>
-        <div class="mv-card-value" style="color:#38bdf8;font-size:1.3rem;font-weight:700">{ref}</div>
+        <div class="mv-card-value" style="color:#0f766e;font-size:1.3rem;font-weight:700">{ref}</div>
       </div>
-      <div style="width:1px;background:#1f3358;height:40px;align-self:center"></div>
+      <div style="width:1px;background:#e2e8f0;height:40px;align-self:center"></div>
       <div>
         <div class="mv-card-title">Consignatario</div>
         <div class="mv-card-value">{consignee}</div>
       </div>
-      <div style="width:1px;background:#1f3358;height:40px;align-self:center"></div>
+      <div style="width:1px;background:#e2e8f0;height:40px;align-self:center"></div>
       <div>
         <div class="mv-card-title">Excel</div>
         <div class="mv-card-value" style="font-size:.85rem;color:#64748b">{excel_file.name}</div>
@@ -510,10 +562,10 @@ def main():
 
     def hl_estado(row):
         e = row["Estado"]
-        if "Exacto"       in e: return ["background-color:#052e16;color:#4ade80"] * len(row)
-        if "Redondeo"     in e: return ["background-color:#1c1400;color:#fbbf24"] * len(row)
-        if "Discrepancia" in e: return ["background-color:#1a0a0a;color:#f87171"] * len(row)
-        return ["background-color:#1a2540;color:#94a3b8"] * len(row)
+        if "Exacto"       in e: return ["background-color:#dcfce7;color:#166534"] * len(row)
+        if "Redondeo"     in e: return ["background-color:#fef9c3;color:#854d0e"] * len(row)
+        if "Discrepancia" in e: return ["background-color:#fee2e2;color:#991b1b"] * len(row)
+        return ["background-color:#f8fafc;color:#64748b"] * len(row)
 
     st.dataframe(
         df_cmp.style.apply(hl_estado, axis=1),
@@ -533,13 +585,13 @@ def main():
         if fact_result["ok"]:
             invs_str = "  ·  ".join(fact_result["en_ambos"])
             st.markdown(f"""
-            <div style="background:#052e16;border:1px solid #166534;border-radius:10px;
-                        padding:.85rem 1.2rem;display:flex;align-items:center;
-                        gap:.8rem;margin-bottom:.8rem">
+            <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;
+                        padding:.9rem 1.3rem;display:flex;align-items:center;
+                        gap:.8rem;margin-bottom:.8rem;box-shadow:0 1px 4px rgba(22,163,74,.1)">
               <span style="font-size:1.3rem">✅</span>
               <div>
-                <span style="color:#4ade80;font-weight:600;font-size:.95rem">Facturas coinciden</span>
-                <span style="color:#86efac;font-size:.85rem;margin-left:.8rem">{invs_str}</span>
+                <span style="color:#166534;font-weight:700;font-size:.95rem">Facturas coinciden</span>
+                <span style="color:#15803d;font-size:.85rem;margin-left:.8rem">{invs_str}</span>
               </div>
             </div>
             """, unsafe_allow_html=True)
@@ -550,11 +602,11 @@ def main():
             if fact_result["solo_pdf"]:
                 msgs.append(f"Solo en PDF: <strong>{', '.join(fact_result['solo_pdf'])}</strong>")
             st.markdown(f"""
-            <div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:10px;
-                        padding:.85rem 1.2rem;display:flex;align-items:center;
-                        gap:.8rem;margin-bottom:.8rem">
+            <div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:12px;
+                        padding:.9rem 1.3rem;display:flex;align-items:center;
+                        gap:.8rem;margin-bottom:.8rem;box-shadow:0 1px 4px rgba(220,38,38,.1)">
               <span style="font-size:1.3rem">🔴</span>
-              <span style="color:#f87171;font-size:.9rem">{' &nbsp;|&nbsp; '.join(msgs)}</span>
+              <span style="color:#991b1b;font-size:.9rem">{' &nbsp;|&nbsp; '.join(msgs)}</span>
             </div>
             """, unsafe_allow_html=True)
 
@@ -572,8 +624,8 @@ def main():
 
         def hl_fact(row):
             if "Coincide" in row["Estado"]:
-                return ["background-color:#052e16;color:#4ade80"] * len(row)
-            return ["background-color:#1a0a0a;color:#f87171"] * len(row)
+                return ["background-color:#dcfce7;color:#166534"] * len(row)
+            return ["background-color:#fee2e2;color:#991b1b"] * len(row)
 
         st.dataframe(
             pd.DataFrame(rows_f).style.apply(hl_fact, axis=1),
